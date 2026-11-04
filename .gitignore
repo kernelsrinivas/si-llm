@@ -1,0 +1,16 @@
+node_modules/
+.vercel/
+dist/
+.output/
+.nitro/
+.tanstack/
+.grok/
+screenshots/
+artifacts/
+*.log
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.node_modules.lock

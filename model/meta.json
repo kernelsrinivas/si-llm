@@ -1,0 +1,11 @@
+{
+  "heldout_exact": 0.9920508744038156,
+  "heldout_bound": 1.0,
+  "epoch": 2,
+  "train_rows": 7424,
+  "test_rows": 629,
+  "params": 14398464,
+  "vocab": 249,
+  "width": 384,
+  "layers": 8
+}

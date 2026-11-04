@@ -1,0 +1,11 @@
+Part number AMS1117-3.3
+SOIC-8 body 4.90 x 3.90 x 1.75 mm pitch 1.27 mm
+QFN-16
+1 GND
+2 VOUT
+3 VIN
+4 VIN
+5 GND
+6 VOUT
+7 VIN
+8 GND
