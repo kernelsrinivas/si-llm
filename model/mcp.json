@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "pcb": {
+      "transport": "http",
+      "target": "http://127.0.0.1:8766/mcp"
+    },
+    "cad": {
+      "transport": "http",
+      "target": "http://127.0.0.1:8767/mcp"
+    }
+  },
+  "alwaysAllow": [],
+  "mode": "man"
+}
