@@ -63,32 +63,21 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         return Ok(0);
     }
     if cleaned[0] == "mode" && cleaned.len() == 2 {
-        let mut cfg = load()?;
-        if !matches!(cleaned[1].as_str(), "auto" | "semi" | "man") {
-            return Err("Mode is auto, semi, or man.".into());
+        let raw = model_post("/mode", &format!("{{\"mode\":\"{}\"}}", escape(&cleaned[1])))?;
+        if raw.contains("\"ok\": false") || raw.contains("\"ok\":false") {
+            let err = json_string(&raw, "error");
+            return Err(if err.is_empty() { "Mode is auto, semi, or man.".into() } else { err });
         }
-        cfg.mode = cleaned[1].clone();
-        save(&cfg)?;
-        println!("{}", cfg.mode);
+        println!("{}", json_string(&raw, "mode"));
         return Ok(0);
     }
     if cleaned[0] == "mcp" {
         return mcp(&cleaned[1..]);
     }
-    let sentence = cleaned.join(" ");
-    let (server_id, tool, arguments) = parse_sentence(&sentence)?;
-    let cfg = load()?;
-    let mode = mode_flag.unwrap_or_else(|| cfg.mode.clone());
-    let key = format!("{server_id}.{tool}");
-    let needs_ask = !yes && gated(&mode, &tool, &key, &cfg.always);
-    if needs_ask {
-        println!("SI-LLM wants to call an MCP tool\n");
-        println!("  server  {server_id}");
-        println!("  tool    {tool}");
-        for (name, value) in &arguments {
-            println!("  {name:<8}{value}");
-        }
-        println!();
+    let text = cleaned.join(" ");
+    let raw = model_ask(&text, yes, mode_flag.as_deref())?;
+    if needs_approval(&raw) && !yes {
+        print_model(&raw)?;
         if !atty() {
             println!("Not sent. Pass --yes to allow once.");
             return Ok(2);
@@ -97,29 +86,74 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         let _ = std::io::stdout().flush();
         let mut line = String::new();
         std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
-        match line.trim().to_ascii_lowercase().as_str() {
-            "y" | "yes" => {}
-            "a" | "always" => {
-                let mut cfg = load()?;
-                if !cfg.always.iter().any(|item| item == &key) {
-                    cfg.always.push(key);
-                    cfg.always.sort();
-                }
-                save(&cfg)?;
-            }
+        let decision = match line.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => "allow",
+            "a" | "always" => "always",
             _ => {
                 println!("Not sent.");
                 return Ok(2);
             }
+        };
+        let proposal = json_string(&raw, "proposalId");
+        let approved = model_post("/approve", &format!("{{\"proposalId\":\"{proposal}\",\"decision\":\"{decision}\"}}"))?;
+        print_model(&approved)?;
+        return Ok(0);
+    }
+    print_model(&raw)?;
+    Ok(0)
+}
+
+fn model_url() -> String {
+    std::env::var("SI_URL").unwrap_or_else(|_| "http://127.0.0.1:8765".into())
+}
+
+fn model_post(path: &str, body: &str) -> Result<String, String> {
+    http_exchange("POST", &format!("{}{path}", model_url()), body)
+}
+
+fn model_get(path: &str) -> Result<String, String> {
+    http_exchange("GET", &format!("{}{path}", model_url()), "")
+}
+
+fn model_ask(text: &str, yes: bool, mode: Option<&str>) -> Result<String, String> {
+    let approved = if yes { "true" } else { "false" };
+    let mode_json = match mode {
+        Some(mode) if !mode.is_empty() => format!(",\"mode\":\"{}\"", escape(mode)),
+        _ => String::new(),
+    };
+    model_post("/cli", &format!("{{\"text\":\"{}\",\"approved\":{approved}{mode_json}}}", escape(text)))
+}
+
+fn json_string(raw: &str, key: &str) -> String {
+    string_field(raw, key).unwrap_or_default()
+}
+
+fn needs_approval(raw: &str) -> bool {
+    raw.contains("\"needsApproval\": true") || raw.contains("\"needsApproval\":true")
+}
+
+fn print_model(raw: &str) -> Result<(), String> {
+    if raw.contains("\"ok\": false") || raw.contains("\"ok\":false") {
+        return Err(json_string(raw, "error"));
+    }
+    let reply = json_string(raw, "reply");
+    if reply.is_empty() {
+        return Err(raw.to_string());
+    }
+    println!("{reply}");
+    if let Some(commands_at) = raw.find("\"commands\"") {
+        let slice = &raw[commands_at..];
+        if let Some(cmd) = string_field(slice, "commands").or_else(|| {
+            let start = slice.find('[').unwrap_or(0);
+            string_field(&slice[start..], "")
+        }) {
+            if !cmd.is_empty() && cmd != "commands" {
+                let runtime = json_string(raw, "runtime");
+                println!("[{}] {cmd}", if runtime.is_empty() { "model" } else { &runtime });
+            }
         }
     }
-    let server = cfg.servers.get(&server_id).cloned().ok_or_else(|| {
-        format!("No MCP server '{server_id}'. Add one with: si mcp add {server_id} --url <url>")
-    })?;
-    let text = call(&server, &tool, &arguments)?;
-    println!("{text}");
-    println!("[native] {server_id}.{tool}");
-    Ok(0)
+    Ok(())
 }
 
 fn print_help() {
@@ -129,7 +163,7 @@ fn print_help() {
     println!("si mcp list");
     println!("si mcp remove <name>");
     println!("si --mode <auto|semi|man> --yes \"place a resistor r1 at 10 12\"");
-    println!("Native client. It calls your MCP server. It does not run the PyTorch trainer.");
+    println!("The CLI is the model client. The server at {} runs the trained model.", model_url());
 }
 
 fn gated(mode: &str, tool: &str, key: &str, always: &[String]) -> bool {
@@ -155,39 +189,51 @@ fn atty() -> bool {
 
 fn mcp(argv: &[String]) -> Result<i32, String> {
     if argv.is_empty() || argv[0] == "list" || argv[0] == "ls" {
-        let cfg = load()?;
-        if cfg.servers.is_empty() {
+        let raw = model_get("/health")?;
+        let Some(start) = raw.find("\"servers\"") else {
             println!("No MCP connections. Add one with: si mcp add <name> --url <url>");
             return Ok(0);
-        }
-        for (id, server) in &cfg.servers {
-            match probe(server) {
-                Ok(names) => println!("{id}  {}  connected  {}", server.transport, names.join(", ")),
-                Err(_) => println!("{id}  {}  offline", server.transport),
+        };
+        let mut cursor = start;
+        let mut any = false;
+        while let Some(pos) = raw[cursor..].find("\"id\"") {
+            let at = cursor + pos;
+            let id = json_string(&raw[at..], "id");
+            if id.is_empty() {
+                break;
             }
+            let transport = json_string(&raw[at..], "transport");
+            let window = &raw[at..raw.len().min(at + 500)];
+            let ok = window.contains("\"ok\": true") || window.contains("\"ok\":true");
+            println!("{id}  {transport}  {}", if ok { "connected" } else { "offline" });
+            any = true;
+            cursor = at + 4;
+        }
+        if !any {
+            println!("No MCP connections. Add one with: si mcp add <name> --url <url>");
         }
         return Ok(0);
     }
     if argv[0] == "remove" && argv.len() >= 2 {
-        let mut cfg = load()?;
-        if cfg.servers.remove(&argv[1]).is_none() {
-            return Err(format!("unknown server {}", argv[1]));
+        let raw = model_post("/mcp/remove", &format!("{{\"name\":\"{}\"}}", escape(&argv[1])))?;
+        if raw.contains("\"ok\": false") || raw.contains("\"ok\":false") {
+            return Err(json_string(&raw, "error"));
         }
-        let prefix = format!("{}.", argv[1]);
-        cfg.always.retain(|item| !item.starts_with(&prefix));
-        save(&cfg)?;
         println!("removed");
         return Ok(0);
     }
     if argv[0] == "add" && argv.len() >= 4 && (argv[2] == "--url" || argv[2] == "--command") {
         let transport = if argv[2] == "--url" { "http" } else { "stdio" };
         let target = argv[3..].join(" ");
-        let server = Server { transport: transport.into(), target: target.clone() };
-        let names = probe(&server)?;
-        let mut cfg = load()?;
-        cfg.servers.insert(argv[1].clone(), server);
-        save(&cfg)?;
-        println!("connected {} ({transport}): {}", argv[1], names.join(", "));
+        let raw = model_post(
+            "/mcp/add",
+            &format!("{{\"name\":\"{}\",\"transport\":\"{transport}\",\"target\":\"{}\"}}", escape(&argv[1]), escape(&target)),
+        )?;
+        if raw.contains("\"ok\": false") || raw.contains("\"ok\":false") {
+            let err = json_string(&raw, "error");
+            return Err(if err.is_empty() { "Could not connect.".into() } else { err });
+        }
+        println!("connected {} ({transport})", argv[1]);
         return Ok(0);
     }
     println!("si mcp list");
@@ -442,19 +488,19 @@ fn rpc(server: &Server, method: &str, params: &str) -> Result<String, String> {
     http_post(&server.target, &body)
 }
 
-fn http_post(url: &str, body: &str) -> Result<String, String> {
-    let rest = url.strip_prefix("http://").ok_or_else(|| "only http:// MCP URLs are supported".to_string())?;
+fn http_exchange(method: &str, url: &str, body: &str) -> Result<String, String> {
+    let rest = url.strip_prefix("http://").ok_or_else(|| "only http:// URLs are supported".to_string())?;
     let (hostport, path) = rest.split_once('/').unwrap_or((rest, ""));
     let path = format!("/{path}");
     let (host, port) = match hostport.split_once(':') {
         Some((host, port)) => (host, port.parse::<u16>().map_err(|_| "bad port".to_string())?),
         None => (hostport, 80u16),
     };
-    let mut stream = TcpStream::connect((host, port)).map_err(|e| format!("{host}:{port} {e}"))?;
-    stream.set_read_timeout(Some(Duration::from_secs(8))).ok();
-    stream.set_write_timeout(Some(Duration::from_secs(8))).ok();
+    let mut stream = TcpStream::connect((host, port)).map_err(|_| format!("The model server is not running at {}", model_url()))?;
+    stream.set_read_timeout(Some(Duration::from_secs(60))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(30))).ok();
     let req = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "{method} {path} HTTP/1.0\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
@@ -463,6 +509,10 @@ fn http_post(url: &str, body: &str) -> Result<String, String> {
     let text = String::from_utf8_lossy(&raw);
     let body = text.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or(&text);
     Ok(body.trim().to_string())
+}
+
+fn http_post(url: &str, body: &str) -> Result<String, String> {
+    http_exchange("POST", url, body)
 }
 
 fn stdio_rpc(command: &str, body: &str) -> Result<String, String> {
