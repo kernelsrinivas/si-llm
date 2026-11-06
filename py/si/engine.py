@@ -26,6 +26,16 @@ PKG_ALIAS = {
     "buck": "BUCK",
     "ant": "ANT",
     "antenna": "ANT",
+    "bjt": "BJT",
+    "transistor": "BJT",
+    "npn": "BJT",
+    "diode": "DIODE",
+    "led": "LED",
+    "ind": "IND",
+    "inductor": "IND",
+    "coil": "IND",
+    "fet": "FET",
+    "mosfet": "FET",
 }
 
 FP_OF = {
@@ -40,16 +50,37 @@ FP_OF = {
     "BUCK": "QFN-16",
     "ANT": "SMA",
     "ISO": "SOIC-16",
+    "BJT": "SOT-23",
+    "FET": "SOT-23",
+    "DIODE": "SOD-123",
+    "LED": "0603",
+    "IND": "0805",
 }
 ICS = {"ESP32", "MCU", "LDO", "IMU", "BUCK"}
-HEIGHT = {"ESP32": 3.3, "USB-C": 3.2, "CONN": 2.5, "ANT": 8.0, "BUCK": 0.9, "LDO": 1.1, "IMU": 0.9, "MCU": 0.9, "RES": 0.5, "CAP": 0.5, "ISO": 1.75}
+HEIGHT = {"ESP32": 3.3, "USB-C": 3.2, "CONN": 2.5, "ANT": 8.0, "BUCK": 0.9, "LDO": 1.1, "IMU": 0.9, "MCU": 0.9, "RES": 0.5, "CAP": 0.5, "ISO": 1.75, "BJT": 1.1, "FET": 1.1, "DIODE": 1.1, "LED": 0.6, "IND": 1.2}
 
 INDUSTRY = {
     "automotive": {"title": "Automotive", "temp": "-40 to 125 °C", "gap": 12, "coat": "conformal coat", "copper": "2 oz on power"},
     "aerospace": {"title": "Aerospace", "temp": "-55 to 125 °C", "gap": 14, "coat": "low-outgassing coat", "copper": "1 oz, derated"},
+    "defense": {"title": "Defense", "temp": "-55 to 125 °C", "gap": 14, "coat": "low-outgassing coat", "copper": "1 oz, derated"},
+    "space": {"title": "Space and satellite", "temp": "-55 to 125 °C", "gap": 14, "coat": "low-outgassing coat", "copper": "1 oz, derated"},
     "marine": {"title": "Marine", "temp": "-20 to 70 °C", "gap": 16, "coat": "thick conformal coat", "copper": "2 oz"},
-    "robot": {"title": "Robot", "temp": "0 to 85 °C", "gap": 10, "coat": "coat on the power area", "copper": "2 oz on the motor stage"},
-    "medical": {"title": "Medical", "temp": "0 to 70 °C", "gap": 18, "coat": "coat, no mask opening on the barrier", "copper": "1 oz"},
+    "robot": {"title": "Robotics and automation", "temp": "0 to 85 °C", "gap": 10, "coat": "coat on the power area", "copper": "2 oz on the motor stage"},
+    "medical": {"title": "Medical and healthcare", "temp": "0 to 70 °C", "gap": 18, "coat": "coat, no mask opening on the barrier", "copper": "1 oz"},
+    "agri": {"title": "Agriculture", "temp": "-40 to 85 °C", "gap": 12, "coat": "thick conformal coat", "copper": "2 oz"},
+    "audio": {"title": "Audio and broadcasting", "temp": "0 to 70 °C", "gap": 8, "coat": "no coat called out", "copper": "1 oz"},
+    "compute": {"title": "Computing and data centers", "temp": "0 to 70 °C", "gap": 6, "coat": "no coat called out", "copper": "2 oz on the rail"},
+    "consumer": {"title": "Consumer electronics", "temp": "0 to 70 °C", "gap": 6, "coat": "no coat called out", "copper": "1 oz"},
+    "industrial": {"title": "Industrial and manufacturing", "temp": "-20 to 85 °C", "gap": 12, "coat": "conformal coat", "copper": "2 oz"},
+    "iot": {"title": "IoT and wearables", "temp": "0 to 60 °C", "gap": 6, "coat": "no coat called out", "copper": "1 oz"},
+    "oil": {"title": "Oil and gas", "temp": "-40 to 125 °C", "gap": 16, "coat": "thick conformal coat", "copper": "2 oz"},
+    "light": {"title": "Optoelectronics and lighting", "temp": "-20 to 85 °C", "gap": 8, "coat": "no coat called out", "copper": "2 oz"},
+    "energy": {"title": "Power and energy", "temp": "-40 to 105 °C", "gap": 14, "coat": "conformal coat", "copper": "2 oz"},
+    "quantum": {"title": "Quantum and cryogenic", "temp": "cryogenic, not a normal range", "gap": 8, "coat": "no coat called out", "copper": "1 oz"},
+    "rail": {"title": "Railway and mass transit", "temp": "-40 to 85 °C", "gap": 14, "coat": "conformal coat", "copper": "2 oz"},
+    "instrument": {"title": "Scientific and test", "temp": "10 to 40 °C", "gap": 8, "coat": "no coat called out", "copper": "1 oz"},
+    "security": {"title": "Security and access", "temp": "-20 to 70 °C", "gap": 8, "coat": "coat over the controller", "copper": "1 oz"},
+    "telecom": {"title": "Telecommunications and RF", "temp": "-40 to 85 °C", "gap": 8, "coat": "no coat called out", "copper": "1 oz"},
 }
 BOARD = {
     "tiny": {"title": "Tiny circuit", "layers": "2", "span": "under 50 mm", "copper": "1 oz", "gap": 4},
@@ -70,6 +101,21 @@ NET_ALIAS = {
     "sw": "SW",
     "usb": "USB",
     "3v3": "3V3",
+    "vcc": "VCC",
+    "vdd": "VDD",
+    "vss": "VSS",
+    "tx": "TX",
+    "rx": "RX",
+    "clk": "CLK",
+    "clock": "CLK",
+    "sda": "SDA",
+    "scl": "SCL",
+    "mosi": "MOSI",
+    "miso": "MISO",
+    "sck": "SCK",
+    "cs": "CS",
+    "can": "CAN",
+    "5v": "5V",
 }
 
 
@@ -93,12 +139,16 @@ def empty_work() -> dict:
         "signal": "",
         "ipc_class": "2",
         "ipc": [],
+        "desk": "",
+        "params": {},
+        "cell": {},
+        "focus": "",
     }
 
 
 def empty_state() -> dict:
     return {
-        "pcb": {"parts": [], "nets": [], "released": False},
+        "pcb": {"parts": [], "nets": [], "tracks": [], "released": False},
         "cad": {
             "length": None,
             "width": None,
@@ -122,6 +172,8 @@ def load_state() -> dict:
         return empty_state()
     base = empty_state()
     base["pcb"].update(data.get("pcb") or {})
+    if not isinstance(base["pcb"].get("tracks"), list):
+        base["pcb"]["tracks"] = []
     base["cad"].update(data.get("cad") or {})
     saved = data.get("work") or {}
     work = base["work"]
@@ -130,6 +182,16 @@ def load_state() -> dict:
             work[key] = saved[key]
     if isinstance(saved.get("signal"), str):
         work["signal"] = saved["signal"]
+    if isinstance(saved.get("desk"), str):
+        work["desk"] = saved["desk"]
+    if isinstance(saved.get("params"), dict):
+        work["params"] = saved["params"]
+    if isinstance(saved.get("cell"), dict) and saved["cell"].get("name"):
+        work["cell"] = saved["cell"]
+    if isinstance(saved.get("focus"), str):
+        work["focus"] = saved["focus"]
+    if isinstance(saved.get("power"), str):
+        work["power"] = saved["power"]
     if saved.get("ipc_class") in {"1", "2", "3"}:
         work["ipc_class"] = saved["ipc_class"]
     for key in ("sim", "view3d", "fab", "assembly", "stack", "industry", "board"):
@@ -177,11 +239,13 @@ def stack_line(state: dict) -> str:
     ind = INDUSTRY.get(str(work.get("industry") or ""))
     brd = BOARD.get(str(work.get("board") or ""))
     who = " ".join(part["title"] for part in (ind, brd) if part) or "Unclassified"
-    layers = brd["layers"] if brd else "4"
-    copper = brd["copper"] if brd else (ind["copper"] if ind else "1 oz outer")
+    stack = _stack_numbers(state)
     coat = ind["coat"] if ind else "no coat called out"
     temp = ind["temp"] if ind else "0 to 70 °C"
-    return f"{who}. {layers} layers, 1.6 mm FR-4, {copper}, ENIG, {coat}. Rating {temp}."
+    material = str(_params(state).get("material") or "FR-4")
+    return (
+        f"{who}. {stack['layers']} layers, {stack['thick']:g} mm {material}, {stack['oz']:g} oz, ENIG, {coat}. Rating {temp}."
+    )
 
 
 def _facts(state: dict) -> dict:
@@ -224,6 +288,62 @@ def industry_verdict(key: str, facts: dict) -> tuple[str, str]:
         if "ESTOP" in names:
             return "pass", "E-stop net cuts the gate drive."
         return "warn", "The e-stop has to cut the gate drive, not only the controller."
+    if key == "defense":
+        if mcus < 2:
+            return "warn", f"A second path is not on the sheet. This is not a MIL-STD or ITAR check. {ind['temp']}."
+        return "pass", f"Two controllers. This is not a MIL-STD or ITAR check. {ind['temp']}."
+    if key == "space":
+        if mcus < 2:
+            return "warn", f"A second path is not on the sheet. Radiation and outgassing are not simulated. {ind['temp']}."
+        return "pass", f"Two controllers. Radiation and outgassing are not simulated. {ind['temp']}."
+    if key == "agri":
+        if "CONN" not in pkgs:
+            return "warn", f"No field connector. {ind['temp']}. Coat is {ind['coat']}."
+        return "pass", f"A field connector is on the sheet. {ind['temp']}."
+    if key == "audio":
+        return "warn", "Analog and digital returns are not separate nets. Broadcast delay is not checked."
+    if key == "compute":
+        if {"BUCK", "LDO"} & pkgs:
+            return "pass", "A regulator is on the sheet for the rail."
+        return "warn", "A data-center board wants a point-of-load regulator."
+    if key == "consumer":
+        return "pass" if pkgs else "warn", f"Consumer range {ind['temp']}." if pkgs else "Nothing is on the sheet yet."
+    if key == "industrial":
+        if "ISO" in pkgs:
+            return "pass", "Field I/O has an isolator."
+        return "warn", "Factory I/O is not isolated."
+    if key == "iot":
+        if "ANT" in pkgs:
+            return "pass", "A radio footprint is on the sheet. Battery life is not estimated."
+        return "warn", "No radio footprint. Battery life is not estimated."
+    if key == "oil":
+        if "CONN" in pkgs:
+            return "pass", f"A field connector is present. This is not an ATEX or IECEx certificate. {ind['temp']}."
+        return "warn", f"No field connector. This is not an ATEX or IECEx certificate. {ind['temp']}."
+    if key == "light":
+        if "LED" in pkgs:
+            return "pass", "An LED is on the sheet. Heat still wants a metal-core stack, which is a separate construction."
+        return "warn", "No LED. A lighting board is not inferred from the stack."
+    if key == "energy":
+        if {"BUCK", "LDO"} & pkgs:
+            return "pass", f"A regulator is on the sheet. {ind['copper']}."
+        return "warn", "Power and energy wants a regulator. This is not a grid-code check."
+    if key == "quantum":
+        return "warn", "FR-4 and these parts are not a cryogenic design. No qubit and no cold wiring are modeled."
+    if key == "rail":
+        if "ISO" in pkgs:
+            return "pass", f"An isolator is present. This is not an EN 50155 check. {ind['temp']}."
+        return "warn", f"Train I/O is not isolated. This is not an EN 50155 check. {ind['temp']}."
+    if key == "instrument":
+        return "warn", "This is not a calibrated measurement path."
+    if key == "security":
+        if mcus:
+            return "warn", "A controller is present. There is no secure element and no tamper mesh."
+        return "warn", "No controller. There is no secure element and no tamper mesh."
+    if key == "telecom":
+        if "ANT" in pkgs:
+            return "pass", "An antenna footprint is on the sheet. RF match is not simulated."
+        return "warn", "No antenna footprint. RF match is not simulated."
     if "ISO" in pkgs:
         return "pass", "An isolator sits between the interface and the patient circuit."
     if "USB-C" in pkgs or "USB" in names:
@@ -309,10 +429,10 @@ def _ensure_wire(state: dict, name: str, a: str, b: str) -> str:
 
 def handle_industry(state: dict, kind: str) -> str:
     if kind not in INDUSTRY:
-        return "Industry is automotive, aerospace, marine, robot, or medical."
+        return "That field is not in the profile list. Ask to list PCB fields."
     facts = _facts(state)
     title = INDUSTRY[kind]["title"]
-    if kind in {"automotive", "aerospace"}:
+    if kind in {"automotive", "aerospace", "defense", "space"}:
         note = _ensure_symbol(state, "U9", "MCU") if facts["mcus"] < 2 else "A second controller is already there."
         hosts = [row["ref"] for row in _symbols(state) if row["pkg"] in {"ESP32", "MCU"}]
         if len(hosts) >= 2 and "GND" not in _facts(state)["names"]:
@@ -334,7 +454,10 @@ def handle_industry(state: dict, kind: str) -> str:
             host = "U1"
             _ensure_symbol(state, "U1", "MCU")
         return f"{title}: " + _ensure_wire(state, "ESTOP", "J9", host)
-    return f"{title}: " + _ensure_symbol(state, "U4", "ISO")
+    if kind == "medical":
+        return f"{title}: " + _ensure_symbol(state, "U4", "ISO")
+    status, detail = industry_verdict(kind, _facts(state))
+    return f"{title}: {status}. {detail}"
 
 
 def handle_board(state: dict, kind: str) -> str:
@@ -565,8 +688,28 @@ def drc(state: dict) -> list[dict]:
     return items
 
 
+def _params(state: dict) -> dict:
+    work = _work(state)
+    saved = work.get("params") if isinstance(work.get("params"), dict) else {}
+    base = {
+        "thickness_mm": 1.6,
+        "layers": None,
+        "copper_oz": None,
+        "min_track_mm": 0.1,
+        "min_clearance_mm": 0.1,
+        "ring_mm": 0.15,
+        "via_drill_mm": 0.3,
+        "material": "FR-4",
+    }
+    for key, value in saved.items():
+        if key in base:
+            base[key] = value
+    return base
+
+
 def _stack_numbers(state: dict) -> dict:
     work = _work(state)
+    p = _params(state)
     brd = BOARD.get(work.get("board") or "")
     ind = INDUSTRY.get(work.get("industry") or "")
     copper = (brd or {}).get("copper") or (ind or {}).get("copper") or "1 oz"
@@ -575,13 +718,26 @@ def _stack_numbers(state: dict) -> dict:
         found = re.findall(r"\d+", brd["layers"])
         if found:
             layers = int(found[0])
+    if p.get("layers"):
+        layers = int(p["layers"])
+    oz = float(p["copper_oz"]) if p.get("copper_oz") else (2.0 if "2 oz" in copper else 1.0)
+    t = 0.035 * oz
+    thick = float(p["thickness_mm"] or 1.6)
     if layers <= 2:
-        height = 1.6
+        height = max(0.08, thick - 2 * t)
     elif layers <= 4:
         height = 0.21
     else:
         height = 0.10
-    return {"h": height, "er": 4.3 if layers < 6 else 3.8, "t": 0.035 * (2.0 if "2 oz" in copper else 1.0), "layers": layers}
+    return {
+        "h": height,
+        "er": 4.3 if layers < 6 else 3.8,
+        "t": t,
+        "layers": layers,
+        "oz": oz,
+        "thick": thick,
+        "b": max(0.2, thick - 0.42),
+    }
 
 
 def _z_microstrip(width: float, h: float, er: float, t: float) -> float:
@@ -599,6 +755,38 @@ def _width_for_z(target: float, h: float, er: float, t: float) -> float | None:
         else:
             hi = mid
     return hi
+
+
+def _z_stripline(width: float, gap: float, er: float, t: float) -> float:
+    return (60 / math.sqrt(er)) * math.log(1.9 * gap / (0.8 * width + t))
+
+
+def _width_for_stripline(target: float, gap: float, er: float, t: float) -> float | None:
+    if gap <= t or _z_stripline(0.05, gap, er, t) < target:
+        return None
+    lo, hi = 0.05, max(0.2, gap * 4)
+    for _ in range(48):
+        mid = (lo + hi) / 2
+        if _z_stripline(mid, gap, er, t) > target:
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+def profile_text(state: dict) -> str:
+    work = _work(state)
+    stack = _stack_numbers(state)
+    p = _params(state)
+    outline = work.get("outline") or []
+    size = f"{outline[0]:g} × {outline[1]:g} mm" if len(outline) == 2 else "outline not set"
+    return (
+        f"Board {size}. {stack['layers']} layers, {stack['thick']:g} mm, {stack['oz']:g} oz. "
+        f"Min track {p['min_track_mm']:g} mm, min space {p['min_clearance_mm']:g} mm. "
+        f"Via drill {p['via_drill_mm']:g} mm, annular ring {p['ring_mm']:g} mm. "
+        "JLCPCB standard 2-layer is often quoted near 0.1 mm trace and space. Confirm the current capability sheet. "
+        "Impedance here is one dielectric number, not a field solver."
+    )
 
 
 def impedance(state: dict, ohms: float) -> str:
@@ -693,11 +881,176 @@ def ipc_report(state: dict, doc: str = "") -> str:
     )
 
 
+def desk_job(state: dict, kind: str, value: float | None = None, name: str = "") -> str:
+    from py.si.desk import lc_cutoff, rc_cutoff, spacing_text, trace_ipc2221, write_bom, write_eda, _ALT
+
+    work = _work(state)
+    params = work.setdefault("params", {})
+    stack = _stack_numbers(state)
+    oz = stack["oz"]
+    if kind == "rules":
+        text = profile_text(state)
+    elif kind == "layers":
+        count = int(value or 0)
+        if count < 1 or count > 32:
+            text = "Layer count is 1 to 32. The impedance model still uses one outer dielectric."
+        else:
+            params["layers"] = count
+            work["stack"] = stack_line(state)
+            text = profile_text(state)
+    elif kind == "copper":
+        ounces = 0.5 if name == "half" else value
+        if ounces is None or ounces < 0.5 or ounces > 2:
+            text = "Copper weight here is 0.5 to 2 oz."
+        else:
+            params["copper_oz"] = ounces
+            work["stack"] = stack_line(state)
+            text = profile_text(state)
+    elif kind == "thick":
+        thick = 1.6 if name == "standard" or value is None else value
+        if thick < 0.4 or thick > 3.2:
+            text = "Board thickness here is 0.4 to 3.2 mm. 1.6 mm is the usual board."
+        else:
+            params["thickness_mm"] = thick
+            work["stack"] = stack_line(state)
+            text = profile_text(state)
+    elif kind == "strip":
+        if stack["layers"] < 4:
+            text = "Stripline needs planes on both sides. This profile is under 4 layers, so use microstrip."
+        else:
+            target = value or 50.0
+            single = target if target <= 60 else target / 2
+            width = _width_for_stripline(single, stack["b"], stack["er"], stack["t"])
+            if width is None:
+                text = f"{target:g} Ω does not fit this stripline spacing."
+            else:
+                text = (
+                    f"Stripline {target:g} Ω is about {width:.3f} mm wide. Plane spacing {stack['b']:.2f} mm, Er {stack['er']}. "
+                    "Symmetric-stripline approximation, not a field solver."
+                )
+                if target > 60:
+                    text += " The pair uses two of those lines. Spacing is not solved."
+    elif kind == "ring":
+        drill = value or float(_params(state)["via_drill_mm"])
+        ring = float(_params(state)["ring_mm"])
+        pad = drill + 2 * ring
+        amps = drill / 0.3
+        text = (
+            f"Drill {drill:.2f} mm, annular ring {ring:.2f} mm, pad {pad:.2f} mm. "
+            f"About {amps:.2f} A using 1 A per 0.3 mm, not IPC-2152. "
+            "Via-in-pad only if the fab fills and caps the hole. This board does not place one."
+        )
+    elif kind == "fab":
+        p = _params(state)
+        text = (
+            f"Stored limits: track {p['min_track_mm']:g} mm, space {p['min_clearance_mm']:g} mm, "
+            f"mask swell 0.05 mm, silk 0.15 mm, edge 0.25 mm. "
+            "JLCPCB standard 2-layer is often quoted near 0.1 mm trace and space. "
+            "That is not their current capability sheet."
+        )
+    elif kind == "width":
+        amps = value or 1.0
+        outer = trace_ipc2221(amps, oz=oz)
+        inner = trace_ipc2221(amps, oz=oz, internal=True)
+        text = (
+            f"IPC-2221 curve fit, not the IPC-2152 charts. {amps:g} A, 10 °C rise, {oz:g} oz, 50 mm. "
+            f"Outer {outer['width_mm']:.3f} mm, {outer['loss_w'] * 1000:.1f} mW. "
+            f"Inner {inner['width_mm']:.3f} mm."
+        )
+    elif kind == "filter":
+        rc = rc_cutoff(10_000, 100e-9)
+        lc = lc_cutoff(10e-6, 100e-9)
+        text = f"RC 10 kΩ and 100 nF cuts at {rc:.1f} Hz. LC 10 µH and 100 nF cuts at {lc / 1000:.2f} kHz. Change the parts if those are not yours."
+    elif kind == "thermal":
+        amps = value or 1.0
+        row = trace_ipc2221(amps, oz=oz)
+        text = (
+            f"Loss on the {amps:g} A outer trace is {row['loss_w'] * 1000:.1f} mW over {row['length_mm']:g} mm "
+            f"({row['ohms'] * 1000:.2f} mΩ). This is I²R, not a board thermal simulation."
+        )
+    elif kind in {"kicad", "skill", "altium"}:
+        path, note = write_eda(state, kind)
+        text = f"{note}. Wrote {path.name}. The EDA tool was not opened."
+    elif kind == "replace":
+        sheets = work.get("datasheets") or []
+        bits = []
+        if sheets:
+            for sheet in sheets:
+                alt = _ALT.get(sheet.get("package") or "", "")
+                pin = f"{sheet.get('pins', '?')} pins" if sheet.get("pins") else "pins not fully read"
+                bits.append(f"{sheet.get('mpn') or sheet.get('ref')} {sheet.get('package')} {pin}. {alt or 'No alternate is on file for this package.'}")
+        else:
+            pkgs = {part["pkg"] for part in state["pcb"]["parts"]}
+            for pkg in sorted(pkgs):
+                bits.append(f"{pkg}: {_ALT.get(pkg, 'No alternate is on file.')}")
+        if not bits:
+            bits.append("No datasheet and no parts. Upload a datasheet or place a part first.")
+        text = " ".join(bits) + " Absolute maximum ratings are not compared unless the datasheet line states them. Stock was not checked."
+    elif kind == "creepage":
+        text = spacing_text(value or 50.0)
+    elif kind == "emi":
+        layers = stack["layers"]
+        has_gnd = any(net["name"] == "GND" for net in state["pcb"]["nets"])
+        has_cap = any(part["pkg"] == "CAP" for part in state["pcb"]["parts"])
+        held = []
+        if not has_gnd:
+            held.append("no GND net for the return")
+        if not has_cap:
+            held.append("no capacitor on the board for a local 100 nF")
+        if not work.get("signal"):
+            held.append("no pour noted")
+        text = (
+            f"{layers}-layer stack. Put the continuous ground next to the signal layer and do not cross a split under a fast net. "
+            "Place one 100 nF at each power pin before the bulk cap."
+        )
+        if held:
+            text += " Held: " + ", ".join(held) + "."
+        else:
+            text += " GND, a capacitor, and a pour note are already on the board."
+    elif kind == "table":
+        path, note = write_bom(state)
+        text = f"BOM table {note}. Wrote {path.name}."
+    else:
+        text = "Ask for trace width, a filter, thermal loss, a KiCad script, a replacement, creepage, EMI, or a BOM table."
+    work["desk"] = text
+    return text
+
+
+def autoroute(state: dict, which: str = "") -> str:
+    from py.si.router import route_board
+
+    pcb = state["pcb"]
+    work = _work(state)
+    params = _params(state)
+    name = which if which and which not in {"all", "<none>"} else ""
+    if which == "rip":
+        pcb["tracks"] = []
+        return "Routes removed."
+    chosen = pcb["nets"]
+    if name:
+        chosen = [net for net in pcb["nets"] if net["name"] == name or net["a"] == name or net["b"] == name]
+        if not chosen:
+            return f"No net named {name}."
+    tracks, failed = route_board(pcb["parts"], chosen, work.get("outline") or [], float(params["min_track_mm"]))
+    if name:
+        keep = [row for row in pcb.get("tracks") or [] if row["name"] != name]
+        pcb["tracks"] = keep + tracks
+    else:
+        pcb["tracks"] = tracks
+    pcb["released"] = False
+    if not tracks and failed:
+        return "Autoroute held. " + " ".join(failed)
+    text = f"Autorouted {len(tracks)} net(s) on one layer, 0.5 mm grid, orthogonal tracks."
+    if failed:
+        text += " Unrouted: " + ", ".join(failed) + "."
+    else:
+        text += " No length matching, no diff-pair spacing, no layer changes."
+    return text
+
+
 def dfm(state: dict) -> str:
     stack = _stack_numbers(state)
     width = _width_for_z(50, stack["h"], stack["er"], stack["t"]) or 0.1
-    ring = 0.15
-    mask = 0.05
     work = _work(state)
     gaps = []
     if not work.get("outline"):
@@ -706,8 +1059,10 @@ def dfm(state: dict) -> str:
         gaps.append("no GND net")
     grade = work.get("ipc_class") if work.get("ipc_class") in {"1", "2", "3"} else "2"
     note = (
-        f"DFM for {stack['layers']} layers, IPC class {grade}: 50 Ω track {width:.3f} mm, annular ring {ring:.2f} mm, mask swell {mask:.2f} mm. "
-        "Shop starting numbers, not the IPC-6012 table."
+        f"DFM for {stack['layers']} layers, IPC class {grade}: 50 Ω track {width:.3f} mm. "
+        "Shop start: drill 0.20–0.30 mm, annular ring 0.15 mm, trace and space 0.13–0.15 mm, "
+        "mask swell 0.05 mm, mask bridge 0.10 mm, silk line 0.15 mm, silk text 1.00 mm. "
+        "Typical factory numbers, not a capability sheet. Silk and the mask web are not measured on this board."
     )
     if gaps:
         note += " Held: " + ", ".join(gaps) + "."
@@ -729,6 +1084,219 @@ def cad_mass(cad: dict) -> dict | None:
     vol = max(0.0, vol)
     grams = vol * 2.70 / 1000.0
     return {"cm3": vol / 1000.0, "grams": grams}
+
+
+def _put(state: dict, ref: str, pkg: str, x: float, y: float) -> None:
+    pcb = state["pcb"]
+    work = _work(state)
+    ref, pkg = canon_ref(ref), canon_pkg(pkg)
+    if not any(part["ref"] == ref for part in pcb["parts"]):
+        pcb["parts"].append({"ref": ref, "pkg": pkg, "x": x, "y": y})
+    if not any(row["ref"] == ref for row in work["symbols"]):
+        work["symbols"].append({"ref": ref, "pkg": pkg})
+    if not any(row["ref"] == ref for row in work["footprints"]):
+        work["footprints"].append({"ref": ref, "fp": FP_OF.get(pkg, pkg)})
+
+
+def _tie(state: dict, name: str, a: str, b: str) -> None:
+    pcb = state["pcb"]
+    work = _work(state)
+    name, a, b = canon_net(name), canon_ref(a), canon_ref(b)
+    if not any(net["name"] == name and net["a"] == a and net["b"] == b for net in pcb["nets"]):
+        pcb["nets"].append({"name": name, "a": a, "b": b})
+    if not any(net["name"] == name and net["a"] == a and net["b"] == b for net in work["wires"]):
+        work["wires"].append({"name": name, "a": a, "b": b})
+
+
+def design_bms(state: dict) -> str:
+    """Place a BMS starter. Cell limits are not taken from a datasheet."""
+    steps = (
+        "Design order: pack connector, cell-sense taps off the pack current, "
+        "a monitor on the sense net, a passive balance resistor, "
+        "back-to-back charge and discharge FETs, a shunt, and a local capacitor. "
+        "Cell limits and balance current come from the cell datasheet. No fuel-gauge integration."
+    )
+    names = {net["name"] for net in state["pcb"]["nets"]}
+    placed = {part["ref"] for part in state["pcb"]["parts"]}
+    if "J8" in placed and "SENSE" in names:
+        return steps
+    for ref, pkg, x, y in (
+        ("J8", "CONN", 12, 64),
+        ("U8", "MCU", 48, 64),
+        ("R8", "RES", 30, 52),
+        ("R9", "RES", 30, 76),
+        ("Q8", "FET", 72, 56),
+        ("Q9", "FET", 72, 76),
+        ("R10", "RES", 92, 64),
+        ("C8", "CAP", 48, 80),
+    ):
+        _put(state, ref, pkg, x, y)
+    for name, a, b in (
+        ("SENSE", "J8", "U8"),
+        ("BAL", "R9", "U8"),
+        ("PACK", "J8", "Q8"),
+        ("GND", "Q8", "Q9"),
+        ("SHUNT", "R10", "U8"),
+        ("GND", "U8", "C8"),
+    ):
+        _tie(state, name, a, b)
+    state["pcb"]["tracks"] = []
+    state["pcb"]["released"] = False
+    return "Placed J8, U8, R8, R9, Q8, Q9, R10, C8. " + steps
+
+
+def design_bridge(state: dict) -> str:
+    """Place a diode bridge and a bulk capacitor. Ripple and the transformer are not sized."""
+    steps = (
+        "Design order: AC connector, four diodes as a bridge, bulk capacitor on the rectified rail. "
+        "No transformer, no regulator, and the ripple current is not calculated."
+    )
+    placed = {part["ref"] for part in state["pcb"]["parts"]}
+    if "D11" in placed and "C7" in placed:
+        return steps
+    for ref, pkg, x, y in (
+        ("J7", "CONN", 12, 100),
+        ("D11", "DIODE", 36, 88),
+        ("D12", "DIODE", 36, 112),
+        ("D13", "DIODE", 60, 88),
+        ("D14", "DIODE", 60, 112),
+        ("C7", "CAP", 84, 100),
+    ):
+        _put(state, ref, pkg, x, y)
+    for name, a, b in (
+        ("AC1", "J7", "D11"),
+        ("AC1", "D11", "D12"),
+        ("AC2", "J7", "D13"),
+        ("AC2", "D13", "D14"),
+        ("VRECT", "D11", "C7"),
+        ("VRECT", "D13", "C7"),
+        ("GND", "D12", "C7"),
+        ("GND", "D14", "C7"),
+    ):
+        _tie(state, name, a, b)
+    state["pcb"]["tracks"] = []
+    state["pcb"]["released"] = False
+    return "Placed J7, D11, D12, D13, D14, C7. " + steps
+
+
+def build_circuit(state: dict, kind: str) -> str:
+    """Place a starter circuit. This is not a silicon layout and not a SPICE run."""
+    kind = kind if kind in {"switch", "plc", "pac", "mcu"} else "mcu"
+    if kind == "switch":
+        parts = [("Q1", "FET", 16, 20), ("D1", "DIODE", 36, 20), ("R1", "RES", 16, 40), ("C1", "CAP", 36, 40), ("L1", "IND", 56, 40)]
+        nets = [("SW", "Q1", "D1"), ("GND", "Q1", "C1"), ("VBUS", "C1", "L1"), ("3V3", "R1", "Q1")]
+        limit = "Low-side FET, gate resistor, freewheel diode, inductor, and a local capacitor. Switching loss and dead time are not simulated."
+    elif kind == "plc":
+        parts = [("J1", "CONN", 12, 28), ("U1", "MCU", 32, 28), ("R1", "RES", 52, 16), ("D1", "DIODE", 72, 16), ("C1", "CAP", 52, 40), ("Q1", "FET", 72, 40), ("D2", "LED", 92, 28)]
+        nets = [("GND", "J1", "U1"), ("SW", "J1", "R1"), ("3V3", "R1", "U1"), ("VBUS", "U1", "Q1"), ("GND", "Q1", "D2")]
+        limit = "PLC-style field input and FET output. Not an IEC 61131 scan cycle."
+    elif kind == "pac":
+        parts = [("J1", "CONN", 12, 24), ("U2", "LDO", 32, 24), ("U1", "MCU", 52, 24), ("C1", "CAP", 52, 44), ("R1", "RES", 72, 16), ("Q1", "FET", 72, 36), ("D1", "DIODE", 92, 24)]
+        nets = [("VBUS", "J1", "U2"), ("3V3", "U2", "U1"), ("GND", "U1", "C1"), ("SW", "U1", "Q1"), ("GND", "Q1", "D1")]
+        limit = "PAC-style controller: MCU, regulator, discrete input resistor, and a FET output. Not a PAC runtime."
+    else:
+        parts = [("J1", "USB-C", 12, 24), ("U2", "LDO", 32, 24), ("U1", "MCU", 56, 24), ("C1", "CAP", 56, 44), ("R1", "RES", 76, 24), ("D2", "LED", 96, 24)]
+        nets = [("VBUS", "J1", "U2"), ("3V3", "U2", "U1"), ("GND", "U1", "C1"), ("SW", "U1", "R1"), ("GND", "R1", "D2")]
+        limit = "MCU board with a regulator, decoupling, and an LED. The chip itself is not laid out. A bare MCU still needs a crystal."
+    for ref, pkg, x, y in parts:
+        _put(state, ref, pkg, x, y)
+    for name, a, b in nets:
+        _tie(state, name, a, b)
+    state["pcb"]["tracks"] = []
+    state["pcb"]["released"] = False
+    by_ref = {part["ref"]: part for part in state["pcb"]["parts"]}
+    far = ""
+    if "Q1" in by_ref and "D1" in by_ref:
+        gap = math.hypot(by_ref["Q1"]["x"] - by_ref["D1"]["x"], by_ref["Q1"]["y"] - by_ref["D1"]["y"])
+        if gap > 30:
+            far = f" Freewheel diode is {gap:.0f} mm from the switch."
+    names = ", ".join(ref for ref, _pkg, _x, _y in parts)
+    return f"Placed {names}. {limit}{far}"
+
+
+def _box(kind: str, x: float, y: float, w: float, h: float) -> dict:
+    return {"kind": kind, "x": x, "y": y, "w": w, "h": h}
+
+
+def design_cell(state: dict, kind: str) -> str:
+    """CMOS cell from transistors on a 1 µm teaching grid. Not a foundry layout."""
+    kind = {"inv": "inverter", "inverter": "inverter", "nand": "nand2", "nor": "nor2"}.get(kind, "inverter")
+    if kind == "nand2":
+        devices = [
+            {"name": "MP1", "type": "PMOS", "w": 2, "l": 1, "g": "A", "d": "Y", "s": "VDD"},
+            {"name": "MP2", "type": "PMOS", "w": 2, "l": 1, "g": "B", "d": "Y", "s": "VDD"},
+            {"name": "MN1", "type": "NMOS", "w": 1, "l": 1, "g": "A", "d": "Y", "s": "Z"},
+            {"name": "MN2", "type": "NMOS", "w": 1, "l": 1, "g": "B", "d": "Z", "s": "VSS"},
+        ]
+        shapes = [
+            _box("metal", 0, 0, 12, 1),
+            _box("metal", 0, 17, 12, 1),
+            _box("ndiff", 2, 2, 8, 2.5),
+            _box("pdiff", 2, 12.5, 8, 2.5),
+            _box("poly", 3.2, 1.2, 1.2, 15.4),
+            _box("poly", 7.2, 1.2, 1.2, 15.4),
+            _box("contact", 2.2, 2.8, 0.7, 0.7),
+            _box("contact", 5.2, 2.8, 0.7, 0.7),
+            _box("contact", 9.0, 2.8, 0.7, 0.7),
+            _box("contact", 2.2, 13.3, 0.7, 0.7),
+            _box("contact", 5.2, 13.3, 0.7, 0.7),
+            _box("contact", 9.0, 13.3, 0.7, 0.7),
+            _box("metal", 2.2, 1, 0.7, 2.5),
+            _box("metal", 2.2, 13.3, 0.7, 3.7),
+            _box("metal", 9.0, 13.3, 0.7, 3.7),
+            _box("metal", 5.2, 2.8, 0.7, 11.2),
+        ]
+        width, height = 12, 18
+    elif kind == "nor2":
+        devices = [
+            {"name": "MP1", "type": "PMOS", "w": 2, "l": 1, "g": "A", "d": "Y", "s": "P"},
+            {"name": "MP2", "type": "PMOS", "w": 2, "l": 1, "g": "B", "d": "P", "s": "VDD"},
+            {"name": "MN1", "type": "NMOS", "w": 1, "l": 1, "g": "A", "d": "Y", "s": "VSS"},
+            {"name": "MN2", "type": "NMOS", "w": 1, "l": 1, "g": "B", "d": "Y", "s": "VSS"},
+        ]
+        shapes = [
+            _box("metal", 0, 0, 12, 1),
+            _box("metal", 0, 17, 12, 1),
+            _box("ndiff", 2, 2, 8, 2.5),
+            _box("pdiff", 2, 12.5, 8, 2.5),
+            _box("poly", 3.2, 1.2, 1.2, 15.4),
+            _box("poly", 7.2, 1.2, 1.2, 15.4),
+            _box("contact", 2.2, 2.8, 0.7, 0.7),
+            _box("contact", 5.2, 2.8, 0.7, 0.7),
+            _box("contact", 9.0, 2.8, 0.7, 0.7),
+            _box("contact", 2.2, 13.3, 0.7, 0.7),
+            _box("contact", 5.2, 13.3, 0.7, 0.7),
+            _box("contact", 9.0, 13.3, 0.7, 0.7),
+            _box("metal", 2.2, 1, 0.7, 2.5),
+            _box("metal", 9.0, 1, 0.7, 2.5),
+            _box("metal", 5.2, 2.8, 0.7, 11.2),
+            _box("metal", 9.0, 13.3, 0.7, 3.7),
+        ]
+        width, height = 12, 18
+    else:
+        devices = [
+            {"name": "MP1", "type": "PMOS", "w": 2, "l": 1, "g": "A", "d": "Y", "s": "VDD"},
+            {"name": "MN1", "type": "NMOS", "w": 1, "l": 1, "g": "A", "d": "Y", "s": "VSS"},
+        ]
+        shapes = [
+            _box("metal", 0, 0, 8, 1),
+            _box("metal", 0, 15, 8, 1),
+            _box("ndiff", 2, 2, 4, 2.5),
+            _box("pdiff", 2, 11.5, 4, 2.5),
+            _box("poly", 3.4, 1.2, 1.2, 13.6),
+            _box("contact", 2.3, 2.8, 0.7, 0.7),
+            _box("contact", 5.0, 2.8, 0.7, 0.7),
+            _box("contact", 2.3, 12.3, 0.7, 0.7),
+            _box("contact", 5.0, 12.3, 0.7, 0.7),
+            _box("metal", 2.3, 1, 0.7, 2.5),
+            _box("metal", 2.3, 12.3, 0.7, 2.7),
+            _box("metal", 5.0, 2.8, 0.7, 10.2),
+        ]
+        width, height = 8, 16
+    note = "1 µm teaching grid. PMOS is drawn twice as wide as NMOS. Not a foundry PDK, not DRC, and not GDSII."
+    _work(state)["cell"] = {"name": kind, "devices": devices, "shapes": shapes, "width": width, "height": height, "note": note}
+    bits = ", ".join(f"{row['name']} {row['type']} W/L {row['w']}/{row['l']} g={row['g']}" for row in devices)
+    return f"{kind} from transistors: {bits}. {note}"
 
 
 def _work(state: dict) -> dict:
@@ -909,7 +1477,7 @@ def apply(state: dict, action: dict) -> str:
     if op == "set_industry":
         kind = str(action.get("kind") or "")
         if kind not in INDUSTRY:
-            return "Industry is automotive, aerospace, marine, robot, or medical."
+            return "That field is not in the profile list. Ask to list PCB fields."
         work["industry"] = kind
         work["stack"] = stack_line(state)
         return f"Industry set to {INDUSTRY[kind]['title']}."
@@ -920,6 +1488,57 @@ def apply(state: dict, action: dict) -> str:
         work["board"] = kind
         work["stack"] = stack_line(state)
         return f"Board class set to {BOARD[kind]['title']}."
+    if op == "power_select":
+        from py.si.power import describe
+
+        picked = describe(str(action.get("kind") or ""))
+        if picked is None:
+            return "That power board is not in the catalog."
+        board, text = picked
+        work["board"] = board
+        work["power"] = str(action.get("kind") or "")
+        work["stack"] = stack_line(state)
+        work["focus"] = text.split(".")[0]
+        kind = str(action.get("kind") or "")
+        if action.get("draw") and kind.startswith("bms_"):
+            text = text + " " + design_bms(state)
+        if action.get("draw") and kind == "acdc_bridge":
+            text = text + " " + design_bridge(state)
+        return text
+    if op == "robot_select":
+        from py.si.robot import describe as describe_robot
+
+        picked = describe_robot(str(action.get("kind") or ""))
+        if picked is None:
+            return "That robot board is not in the catalog."
+        title, text = picked
+        work["industry"] = "robot"
+        work["robot"] = str(action.get("kind") or "")
+        work["focus"] = title
+        work["stack"] = stack_line(state)
+        return text
+    if op == "computer_select":
+        from py.si.computer import describe as describe_computer
+
+        picked = describe_computer(str(action.get("kind") or ""))
+        if picked is None:
+            return "That computer board is not in the catalog."
+        title, text = picked
+        work["computer"] = str(action.get("kind") or "")
+        work["focus"] = title
+        work["stack"] = stack_line(state)
+        return text
+    if op == "sensor_select":
+        from py.si.sensor import describe as describe_sensor
+
+        picked = describe_sensor(str(action.get("kind") or ""))
+        if picked is None:
+            return "That sensor or switch board is not in the catalog."
+        title, text = picked
+        work["sensor"] = str(action.get("kind") or "")
+        work["focus"] = title
+        work["stack"] = stack_line(state)
+        return text
     if op == "set_outline":
         length, width = float(action["length"]), float(action["width"])
         if length <= 0 or width <= 0:
@@ -1010,13 +1629,82 @@ def apply(state: dict, action: dict) -> str:
         x, y = float(action["x"]), float(action["y"])
         pcb["parts"] = [p for p in pcb["parts"] if p["ref"] != ref]
         pcb["parts"].append({"ref": ref, "pkg": pkg, "x": x, "y": y})
+        pcb["tracks"] = []
         pcb["released"] = False
         return f"Placed {pkg} as {ref} at ({x:g}, {y:g}) mm."
+    if op == "pcb_delete":
+        ref = canon_ref(str(action["ref"]))
+        before = len(pcb["parts"])
+        pcb["parts"] = [part for part in pcb["parts"] if part["ref"] != ref]
+        if len(pcb["parts"]) == before:
+            return f"{ref} is not on the board."
+        pcb["nets"] = [net for net in pcb["nets"] if net["a"] != ref and net["b"] != ref]
+        pcb["tracks"] = []
+        pcb["released"] = False
+        return f"Removed {ref}."
+    if op == "pcb_move":
+        ref = canon_ref(str(action["ref"]))
+        part = next((item for item in pcb["parts"] if item["ref"] == ref), None)
+        if part is None:
+            return f"{ref} is not on the board."
+        part["x"], part["y"] = float(action["x"]), float(action["y"])
+        pcb["tracks"] = []
+        pcb["released"] = False
+        return f"Moved {ref} to ({part['x']:g}, {part['y']:g}) mm."
+    if op == "pcb_rotate":
+        ref = canon_ref(str(action["ref"]))
+        part = next((item for item in pcb["parts"] if item["ref"] == ref), None)
+        if part is None:
+            return f"{ref} is not on the board."
+        part["rot"] = int(float(action["angle"])) % 360
+        return f"{ref} rotation stored as {part['rot']}°. The drawing does not turn the pads."
+    if op == "pcb_copy":
+        src = canon_ref(str(action["ref"]))
+        dest = canon_ref(str(action["to"]))
+        part = next((item for item in pcb["parts"] if item["ref"] == src), None)
+        if part is None:
+            return f"{src} is not on the board."
+        x = float(action["x"]) if action.get("x") is not None else float(part["x"]) + 5
+        y = float(action["y"]) if action.get("y") is not None else float(part["y"]) + 5
+        pcb["parts"] = [item for item in pcb["parts"] if item["ref"] != dest]
+        pcb["parts"].append({"ref": dest, "pkg": part["pkg"], "x": x, "y": y, "rot": part.get("rot", 0), "side": part.get("side", "top")})
+        pcb["tracks"] = []
+        pcb["released"] = False
+        return f"Copied {src} to {dest} at ({x:g}, {y:g}) mm."
+    if op == "pcb_swap":
+        left = canon_ref(str(action["a"]))
+        right = canon_ref(str(action["b"]))
+        a = next((item for item in pcb["parts"] if item["ref"] == left), None)
+        b = next((item for item in pcb["parts"] if item["ref"] == right), None)
+        if a is None or b is None:
+            missing = left if a is None else right
+            return f"{missing} is not on the board."
+        a["x"], b["x"] = b["x"], a["x"]
+        a["y"], b["y"] = b["y"], a["y"]
+        pcb["tracks"] = []
+        pcb["released"] = False
+        return f"Swapped {left} and {right}."
+    if op == "pcb_flip":
+        ref = canon_ref(str(action["ref"]))
+        part = next((item for item in pcb["parts"] if item["ref"] == ref), None)
+        if part is None:
+            return f"{ref} is not on the board."
+        part["side"] = "bottom" if part.get("side") != "bottom" else "top"
+        return f"{ref} is stored on the {part['side']}. The drawing stays a top view."
+    if op == "pcb_find":
+        ref = canon_ref(str(action["ref"]))
+        part = next((item for item in pcb["parts"] if item["ref"] == ref), None)
+        if part is None:
+            return f"{ref} is not on the board."
+        return f"{ref} is {part['pkg']} at ({float(part['x']):g}, {float(part['y']):g}) mm, rotation {int(part.get('rot') or 0)}°, {part.get('side') or 'top'}."
+    if op == "note":
+        return str(action.get("text") or "")
     if op == "pcb_net":
         name = canon_net(str(action["name"]))
         a, b = canon_ref(str(action["a"])), canon_ref(str(action["b"]))
         pcb["nets"] = [n for n in pcb["nets"] if not (n["name"] == name and n["a"] == a and n["b"] == b)]
         pcb["nets"].append({"name": name, "a": a, "b": b})
+        pcb["tracks"] = []
         pcb["released"] = False
         return f"Net {name} ties {a} to {b}."
     if op == "pcb_flow":
@@ -1083,6 +1771,20 @@ def apply(state: dict, action: dict) -> str:
         return pour_ground(state)
     if op == "dfm":
         return dfm(state)
+    if op == "desk":
+        return desk_job(state, str(action.get("kind") or ""), action.get("value"), str(action.get("name") or ""))
+    if op == "feature_audit":
+        from py.si.audit import summarize
+
+        text = summarize()
+        _work(state)["desk"] = text
+        return text
+    if op == "autoroute":
+        return autoroute(state, str(action.get("which") or ""))
+    if op == "build_circuit":
+        return build_circuit(state, str(action.get("kind") or "mcu"))
+    if op == "design_cell":
+        return design_cell(state, str(action.get("kind") or "inv"))
     if op == "set_ipc":
         kind = str(action.get("kind") or "")
         if kind not in {"1", "2", "3"}:
@@ -1239,7 +1941,7 @@ def parse_cli(line: str) -> dict | None:
             if kind in INDUSTRY:
                 return {"op": "set_industry", "kind": kind}
         if head == "industry":
-            return {"op": "error", "text": "industry needs automotive, aerospace, marine, robot, or medical"}
+            return {"op": "error", "text": "That field is not in the profile list. Ask to list PCB fields."}
         return None
     if head == "board" and len(bits) >= 2:
         kind = bits[1].lower()
@@ -1342,7 +2044,8 @@ _WORD = re.compile(r"[a-z0-9]+", re.I)
 
 
 def tokenize(text: str) -> list[str]:
-    lowered = text.lower().replace("usb-c", "usbc").replace("usb c", "usbc")
+    lowered = text.lower().replace("usb-c", "usbc")
+    lowered = re.sub(r"\busb c\b", "usbc", lowered)
     return _WORD.findall(lowered)
 
 

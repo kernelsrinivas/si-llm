@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import select
 import shlex
@@ -237,6 +238,28 @@ def plan(action: dict) -> list[tuple[str, str, dict]]:
         return [("pcb", "pcb_add", {"ref": action["ref"], "pkg": action["pkg"], "x": action["x"], "y": action["y"]})]
     if op == "pcb_net":
         return [("pcb", "pcb_net", {"name": action["name"], "a": action["a"], "b": action["b"]})]
+    if op == "pcb_delete":
+        return [("pcb", "pcb_delete", {"ref": action["ref"]})]
+    if op == "pcb_move":
+        return [("pcb", "pcb_move", {"ref": action["ref"], "x": action["x"], "y": action["y"]})]
+    if op == "pcb_rotate":
+        return [("pcb", "pcb_rotate", {"ref": action["ref"], "angle": action["angle"]})]
+    if op == "pcb_copy":
+        return [("pcb", "pcb_copy", {"ref": action["ref"], "to": action["to"], "x": action.get("x"), "y": action.get("y")})]
+    if op == "pcb_swap":
+        return [("pcb", "pcb_swap", {"a": action["a"], "b": action["b"]})]
+    if op == "pcb_flip":
+        return [("pcb", "pcb_flip", {"ref": action["ref"]})]
+    if op == "pcb_find":
+        return [("pcb", "pcb_find", {"ref": action["ref"]})]
+    if op == "power_select":
+        return [("pcb", "power_select", {"kind": action.get("kind") or "", "draw": bool(action.get("draw"))})]
+    if op == "robot_select":
+        return [("pcb", "robot_select", {"kind": action.get("kind") or ""})]
+    if op == "computer_select":
+        return [("pcb", "computer_select", {"kind": action.get("kind") or ""})]
+    if op == "sensor_select":
+        return [("pcb", "sensor_select", {"kind": action.get("kind") or ""})]
     if op == "pcb_flow":
         return [("pcb", "pcb_flow", {})]
     if op == "pcb_drc":
@@ -303,6 +326,16 @@ def plan(action: dict) -> list[tuple[str, str, dict]]:
         return [("pcb", "set_ipc", {"kind": action.get("kind") or "2"})]
     if op == "ipc_check":
         return [("pcb", "ipc_check", {"doc": action.get("doc") or ""})]
+    if op == "desk":
+        return [("pcb", "desk", {"kind": action.get("kind") or "", "value": action.get("value"), "name": action.get("name") or ""})]
+    if op == "feature_audit":
+        return [("pcb", "feature_audit", {})]
+    if op == "autoroute":
+        return [("pcb", "autoroute", {"which": action.get("which") or "all"})]
+    if op == "build_circuit":
+        return [("pcb", "build_circuit", {"kind": action.get("kind") or "mcu"})]
+    if op == "design_cell":
+        return [("pcb", "design_cell", {"kind": action.get("kind") or "inv"})]
     if op == "handle_all":
         return [("pcb", "handle_all", {})]
     if op == "handle_industry":
@@ -363,7 +396,7 @@ def resolve(calls: list[tuple[str, str, dict]]) -> tuple[list[tuple[str, str, di
     return resolved, ""
 
 
-READONLY = {"pcb_drc", "pcb_status", "cad_mass", "cad_status", "sch_erc", "sim_dc", "sim_tran", "view_3d", "fab_stack", "asm_bom", "chip_check", "industry_check", "cover_all", "impedance", "dfm", "via", "ipc_check"}
+READONLY = {"pcb_drc", "pcb_status", "pcb_find", "cad_mass", "cad_status", "sch_erc", "sim_dc", "sim_tran", "view_3d", "fab_stack", "asm_bom", "chip_check", "industry_check", "cover_all", "impedance", "dfm", "via", "ipc_check", "desk", "feature_audit"}
 
 
 def current_mode() -> str:
@@ -442,10 +475,110 @@ def execute(calls: list[tuple[str, str, dict]], runtime: str, program: list[str]
     return pack(" ".join(replies), commands, runtime, op, state, calls=public_calls(calls))
 
 
+_ROBOT_HINT = re.compile(r"\b(robot|robotics|humanoid|drone|uav|joint|gripper|amr|agv|quadruped|manipulator|flight)\b", re.I)
+_COMPUTER_HINT = re.compile(r"\b(computer|motherboard|cpu|gpu|ddr|pcie|laptop|server|atx|dimm|nvme|desktop|workstation|thunderbolt|hdmi|chipset|bios|uefi|sodimm|nic)\b", re.I)
+
+
+_SENSOR_HINT = re.compile(r"\b(sensor|sensors|switch|switches|thermistor|thermocouple|relay|humidity|proximity)\b", re.I)
+_POWER_HINT = re.compile(r"\b(power|converter|inverter|rectifier|bms|smps)\b", re.I)
+_LABELS = {"power": "Power", "robot": "Robotics", "computer": "Computer", "sensor": "Sensor"}
+
+
+def _choose_catalog(text: str, hits: list[tuple[str, dict | None]]) -> tuple[str | None, dict | None]:
+    """Keep the longest board name. A tie stays on the catalog the words point to."""
+    hits = [(name, row) for name, row in hits if row]
+    if not hits:
+        return None, None
+    if len(hits) == 1:
+        return hits[0]
+    best = max(int(row.get("span") or 0) for _, row in hits)
+    top = [(name, row) for name, row in hits if int(row.get("span") or 0) == best]
+    if len(top) == 1:
+        return top[0]
+    hints = {"power": _POWER_HINT, "robot": _ROBOT_HINT, "computer": _COMPUTER_HINT, "sensor": _SENSOR_HINT}
+    hinted = [(name, row) for name, row in top if hints[name].search(text)]
+    if len(hinted) == 1:
+        return hinted[0]
+    text_out = "That name is in more than one catalog. " + " ".join(f"{_LABELS[name]}: {row['text']}" for name, row in top)
+    return "both", {"mode": "ask", "id": "", "text": text_out, "span": best}
+
+
 def designer_turn(text: str, approved: bool = False, mode: str | None = None) -> dict:
-    action = parse_cli(text)
+    from py.si.engine import _params, _work, remember, save_state
+    from py.si.graph import answer
+
+    hit = answer(text, float(_params(load_state())["min_clearance_mm"]))
+    power_action = None
+    robot_action = None
+    computer_action = None
+    sensor_action = None
+    if hit is None:
+        from py.si.computer import lookup as computer_lookup
+        from py.si.power import lookup
+        from py.si.robot import lookup as robot_lookup
+        from py.si.sensor import lookup as sensor_lookup
+
+        name, chosen = _choose_catalog(text, [
+            ("power", lookup(text)),
+            ("robot", robot_lookup(text)),
+            ("computer", computer_lookup(text)),
+            ("sensor", sensor_lookup(text)),
+        ])
+        if chosen and chosen["mode"] == "ask":
+            state = load_state()
+            _work(state)["focus"] = chosen["text"].split(".")[0]
+            remember(state, text.strip(), chosen["text"], [name or "both"])
+            save_state(state)
+            return pack(chosen["text"], [name or "both"], name or "both", "lookup", snapshot(state))
+        if chosen and chosen["mode"] == "set" and name == "power":
+            power_action = {"op": "power_select", "kind": chosen["id"], "draw": bool(chosen.get("draw"))}
+        elif chosen and chosen["mode"] == "set" and name == "robot":
+            robot_action = {"op": "robot_select", "kind": chosen["id"]}
+        elif chosen and chosen["mode"] == "set" and name == "computer":
+            computer_action = {"op": "computer_select", "kind": chosen["id"]}
+        elif chosen and chosen["mode"] == "set" and name == "sensor":
+            sensor_action = {"op": "sensor_select", "kind": chosen["id"]}
+    if hit:
+        state = load_state()
+        work = _work(state)
+        work["focus"] = hit["focus"]
+        chosen = hit.get("set")
+        if chosen:
+            params = work.setdefault("params", {})
+            if chosen.get("layers"):
+                params["layers"] = chosen["layers"]
+            if chosen.get("material"):
+                params["material"] = chosen["material"]
+            from py.si.engine import stack_line
+
+            work["stack"] = stack_line(state)
+        remember(state, text.strip(), hit["text"], ["graph"])
+        save_state(state)
+        return pack(hit["text"], ["graph"], "graph", "lookup", snapshot(state))
+    action = None
     program: list[str] = []
-    runtime = "cli-client"
+    runtime = "power"
+    if power_action:
+        action = power_action
+    elif robot_action:
+        action = robot_action
+        runtime = "robot"
+    elif computer_action:
+        action = computer_action
+        runtime = "computer"
+    elif sensor_action:
+        action = sensor_action
+        runtime = "sensor"
+    else:
+        runtime = "hear"
+        from py.si.hear import hear
+
+        heard = hear(text)
+        if heard is not None:
+            action = heard
+        else:
+            action = parse_cli(text)
+            runtime = "cli-client"
     if action is None:
         model, vocab, stoi, _meta = model_bundle()
         program = predict(model, text, vocab, stoi, "cpu")
@@ -454,6 +587,8 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
     calls = plan(action)
     state = snapshot(load_state())
     op = str(action.get("op") or "")
+    if op == "note":
+        return pack(str(action.get("text")), ["hear"], runtime, op, state)
     if op == "help" or (not calls and op != "error"):
         reply = HELP if op == "help" else "Say that again as a PCB place/net/flow or a CAD sketch/extrude/hole."
         return pack(reply, ["help"], runtime, op, state)

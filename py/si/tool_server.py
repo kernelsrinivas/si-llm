@@ -34,6 +34,17 @@ PCB_TOOLS = [
             "required": ["name", "a", "b"],
         },
     },
+    {"name": "pcb_delete", "description": "Remove a reference from the board.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}}, "required": ["ref"]}},
+    {"name": "pcb_move", "description": "Move a reference to a new millimetre coordinate.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["ref", "x", "y"]}},
+    {"name": "pcb_rotate", "description": "Store a rotation in degrees. The drawing does not turn the pads.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "angle": {"type": "number"}}, "required": ["ref", "angle"]}},
+    {"name": "pcb_copy", "description": "Copy a placed part to a new reference.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "to": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["ref", "to"]}},
+    {"name": "pcb_swap", "description": "Exchange the coordinates of two references.", "inputSchema": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}}, "required": ["a", "b"]}},
+    {"name": "pcb_flip", "description": "Store the part on the other side. The drawing stays a top view.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}}, "required": ["ref"]}},
+    {"name": "pcb_find", "description": "Report one reference.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}}, "required": ["ref"]}},
+    {"name": "power_select", "description": "Select a power-electronics board profile. A BMS design request also places the starter sheet.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}, "draw": {"type": "boolean"}}, "required": ["kind"]}},
+    {"name": "robot_select", "description": "Select a robotics board profile. It stores the class and does not place a mechanism.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
+    {"name": "computer_select", "description": "Select a computer board profile. It stores the class and does not solve signal integrity.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
+    {"name": "sensor_select", "description": "Select a sensor or switch board profile. It stores the class and does not calculate the front end.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
     {"name": "pcb_flow", "description": "Run DRC, then pack Gerber and BOM if the board is clean.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "pcb_drc", "description": "Design rule check for the current board.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "pcb_status", "description": "List parts and nets.", "inputSchema": {"type": "object", "properties": {}}},
@@ -65,6 +76,11 @@ PCB_TOOLS = [
     {"name": "diff", "description": "Approximate a 90 ohm differential pair.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "set_ipc", "description": "Set IPC class 1, 2, or 3 and score the IPC set.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
     {"name": "ipc_check", "description": "Score the PCB IPC document set. Not a licensed certificate.", "inputSchema": {"type": "object", "properties": {"doc": {"type": "string"}}}},
+    {"name": "desk", "description": "Trace width, filter, thermal loss, EDA script, replacement, spacing, EMI, or BOM table.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}, "value": {"type": "number"}}, "required": ["kind"]}},
+    {"name": "feature_audit", "description": "Say which PCB features this product actually runs.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "autoroute", "description": "Orthogonal single-layer autoroute, or rip the tracks.", "inputSchema": {"type": "object", "properties": {"which": {"type": "string"}}}},
+    {"name": "build_circuit", "description": "Place a switch, PLC, PAC, or MCU starter board. Not a silicon layout.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
+    {"name": "design_cell", "description": "Build an inverter, NAND2, or NOR2 from NMOS and PMOS. Teaching grid, not a foundry PDK.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
     {"name": "handle_industry", "description": "Add the PCB element an industry still lacks.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
     {"name": "handle_board", "description": "Add the PCB element a board class still lacks.", "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
 ]
@@ -119,8 +135,40 @@ def action_for(name: str, args: dict) -> dict | None:
         return {"op": "pcb_add", "ref": args.get("ref"), "pkg": args.get("pkg"), "x": args.get("x"), "y": args.get("y")}
     if name == "pcb_net":
         return {"op": "pcb_net", "name": args.get("name"), "a": args.get("a"), "b": args.get("b")}
+    if name == "pcb_delete":
+        return {"op": "pcb_delete", "ref": args.get("ref")}
+    if name == "pcb_move":
+        return {"op": "pcb_move", "ref": args.get("ref"), "x": args.get("x"), "y": args.get("y")}
+    if name == "pcb_rotate":
+        return {"op": "pcb_rotate", "ref": args.get("ref"), "angle": args.get("angle")}
+    if name == "pcb_copy":
+        return {"op": "pcb_copy", "ref": args.get("ref"), "to": args.get("to"), "x": args.get("x"), "y": args.get("y")}
+    if name == "pcb_swap":
+        return {"op": "pcb_swap", "a": args.get("a"), "b": args.get("b")}
+    if name == "pcb_flip":
+        return {"op": "pcb_flip", "ref": args.get("ref")}
+    if name == "pcb_find":
+        return {"op": "pcb_find", "ref": args.get("ref")}
+    if name == "power_select":
+        return {"op": "power_select", "kind": args.get("kind"), "draw": bool(args.get("draw"))}
+    if name == "robot_select":
+        return {"op": "robot_select", "kind": args.get("kind")}
+    if name == "computer_select":
+        return {"op": "computer_select", "kind": args.get("kind")}
+    if name == "sensor_select":
+        return {"op": "sensor_select", "kind": args.get("kind")}
     if name in {"pcb_flow", "pcb_drc", "pcb_status", "pcb_reset", "cad_mass", "cad_status", "cad_reset", "sch_erc", "sim_dc", "sim_tran", "view_3d", "fab_gerber", "fab_stack", "asm_bom", "asm_pos", "industry_check", "cover_all", "handle_all", "place_sheet", "datasheet_rebuild", "pour", "dfm", "ipc_check"}:
         return {"op": name, **({"doc": args.get("doc")} if name == "ipc_check" else {})}
+    if name == "feature_audit":
+        return {"op": "feature_audit"}
+    if name == "autoroute":
+        return {"op": "autoroute", "which": args.get("which") or "all"}
+    if name == "build_circuit":
+        return {"op": "build_circuit", "kind": args.get("kind") or "mcu"}
+    if name == "design_cell":
+        return {"op": "design_cell", "kind": args.get("kind") or "inv"}
+    if name == "desk":
+        return {"op": "desk", "kind": args.get("kind"), "value": args.get("value"), "name": args.get("name") or ""}
     if name == "set_ipc":
         return {"op": "set_ipc", "kind": args.get("kind")}
     if name == "impedance":
