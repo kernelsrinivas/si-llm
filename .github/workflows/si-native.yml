@@ -48,6 +48,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build with Xcode
-        run: xcodebuild -project native/xcode/si.xcodeproj -scheme si -configuration Release -destination "platform=macOS" build
+      - name: Build the preferred macOS binary
+        run: sh native/xcode/macos.sh arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: si-macos-arm64
+          path: native/xcode/build/Build/Products/Release/si
+
 

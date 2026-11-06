@@ -1,6 +1,7 @@
-// Xcode command-line tool. C++17, no Python.
-// Open native/xcode/si.xcodeproj on a Mac and run the "si" scheme.
-// Linux check: g++ -std=c++17 -O2 -o si native/xcode/si/main.cpp
+// Preferred platform: macOS (Apple Silicon first, Intel as a second slice).
+// On a Mac: open native/xcode/si.xcodeproj and run the si scheme,
+// or run native/xcode/macos.sh.
+// The Linux g++ build is only a compile check of this same file.
 
 #include <algorithm>
 #include <cctype>
@@ -381,12 +382,13 @@ Command parse_sentence(const std::string &text) {
 }
 
 void help() {
-  std::cout << "si mode <auto|semi|man>\n"
+  std::cout << "si  (preferred: macOS, Xcode scheme si)\n"
+            << "si mode <auto|semi|man>\n"
             << "si mcp add <name> --url <url>\n"
             << "si mcp list\n"
             << "si mcp remove <name>\n"
             << "si --mode <auto|semi|man> --yes \"place a resistor r1 at 10 12\"\n"
-            << "Xcode C++ client. The same scheme also builds the Rust binary as si-rust when cargo is installed. Neither runs the PyTorch trainer.\n";
+            << "Build on a Mac with native/xcode/macos.sh. Apple Silicon is the preferred slice.\n";
 }
 
 bool gated(const std::string &mode, const std::string &tool, const std::string &key, const std::vector<std::string> &always) {
