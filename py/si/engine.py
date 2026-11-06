@@ -179,7 +179,7 @@ def load_state() -> dict:
     base["cad"].update(data.get("cad") or {})
     saved = data.get("work") or {}
     work = base["work"]
-    for key in ("symbols", "wires", "footprints", "chip", "rules", "coverage", "outline", "datasheets", "ipc"):
+    for key in ("symbols", "wires", "footprints", "chip", "rules", "coverage", "outline", "datasheets", "ipc", "bom"):
         if isinstance(saved.get(key), list):
             work[key] = saved[key]
     if isinstance(saved.get("signal"), str):
@@ -1272,6 +1272,45 @@ def sonar_suggestions(spec: dict) -> list[dict]:
     ]
 
 
+_ROLE = {"R": "resistor", "C": "capacitor", "L": "inductor", "D": "diode", "Q": "transistor", "U": "integrated circuit", "J": "connector", "Y": "crystal"}
+
+
+def think_bom(state: dict, values: dict | None = None) -> list[dict]:
+    """Group placed parts by what they are, not only by package name."""
+    work = _work(state)
+    lands = {row["ref"]: row.get("fp") or "" for row in work.get("footprints") or []}
+    given = values or {}
+    grouped: dict[tuple, dict] = {}
+    for part in state["pcb"]["parts"]:
+        ref = str(part["ref"])
+        prefix = "TP" if ref.startswith("TP") else "SW" if ref.startswith("SW") else ref[:1]
+        role = _ROLE.get(prefix, str(part["pkg"]).lower())
+        value = str(given.get(ref) or part.get("value") or "")
+        if value:
+            part["value"] = value
+        land = lands.get(ref, "")
+        key = (part["pkg"], land, role, value)
+        row = grouped.setdefault(key, {"pkg": part["pkg"], "footprint": land, "role": role, "value": value, "refs": [], "qty": 0})
+        row["refs"].append(ref)
+        row["qty"] += 1
+    rows = list(grouped.values())
+    rows.sort(key=lambda row: (row["role"], row["value"], row["pkg"]))
+    return rows
+
+
+def bom_sentence(state: dict, values: dict | None = None) -> str:
+    rows = think_bom(state, values)
+    work = _work(state)
+    work["bom"] = rows
+    bits = []
+    for row in rows:
+        value = f" {row['value']}" if row["value"] else ""
+        land = f" {row['footprint']}" if row["footprint"] else ""
+        bits.append(f"{row['qty']} {row['role']}{value}{land} ({', '.join(row['refs'])})")
+    work["assembly"] = "BOM " + "; ".join(bits)
+    return work["assembly"] + "."
+
+
 def design_sonar_booster(state: dict, spec: dict) -> str:
     """DC boost that feeds a sonar panel. Ping energy and the transducer match are not designed."""
     vin = float(spec["vin"])
@@ -1349,7 +1388,8 @@ def design_sonar_booster(state: dict, spec: dict) -> str:
         f"2 oz copper: input trace {power_trace['width_mm']:.2f} mm, output trace {out_trace['width_mm']:.2f} mm, 10 C rise. "
         f"Coated clearance {gap['coated']:.2f} mm at {vout:.0f} V. "
         "Placed JB, CB1, LB, QB, DB, CB2, UB, RB1, RB2 on a 120 x 70 mm, 4-layer marine board. "
-        "The acoustic ping, the transducer match, and the control-loop compensation are not designed."
+        "The acoustic ping, the transducer match, and the control-loop compensation are not designed. "
+        + bom_sentence(state, {"LB": f"{henry * 1e6:.1f} uH", "CB2": f"{cout_uf:.0f} uF", "RB1": f"{r_top / 1000:.1f} kohm", "RB2": f"{r_bottom / 1000:.0f} kohm"})
     )
 
 
@@ -1845,11 +1885,7 @@ def apply(state: dict, action: dict) -> str:
         unplaced = [s["ref"] for s in work["symbols"] if s["ref"] not in placed]
         if unplaced:
             return "Assembly held. Schematic refs are not on the layout: " + ", ".join(unplaced) + "."
-        counts: dict[str, int] = {}
-        for part in pcb["parts"]:
-            counts[part["pkg"]] = counts.get(part["pkg"], 0) + 1
-        work["assembly"] = "BOM " + ", ".join(f"{name} x{qty}" for name, qty in sorted(counts.items()))
-        return work["assembly"] + "."
+        return bom_sentence(state)
     if op == "asm_pos":
         if not pcb["parts"]:
             return "Assembly needs placed parts."
