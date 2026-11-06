@@ -1117,54 +1117,79 @@ def sonar_booster_task(text: str) -> bool:
     return "sonar" in words and any(word.startswith("boost") for word in words)
 
 
+_SUGGESTIONS = {
+    "vin": ("12 V", "24 V"),
+    "vout": ("48 V", "60 V"),
+    "iout": ("1 A", "1.5 A", "2 A"),
+    "freq": ("100 kHz", "200 kHz", "500 kHz"),
+    "eff": ("85%", "90%", "95%"),
+}
+
+
+def _ask_line(prompt: str, key: str) -> str:
+    choices = ", ".join(_SUGGESTIONS[key])
+    return f"{prompt}\n  suggestions: {choices}\n  custom: type your own value"
+
+
+def _labeled_number(low: str, names: str, unit: str) -> float | None:
+    found = re.search(rf"\b(?:{names})\b[^0-9]{{0,16}}(\d+(?:\.\d+)?)\s*{unit}", low)
+    return float(found.group(1)) if found else None
+
+
 def sonar_ratings(text: str) -> dict | list[str]:
-    """Missing ratings come back as questions. Nothing is filled in."""
+    """Missing ratings come back as questions with suggestions. Nothing is filled in unless the user asks for the suggestions or types a value."""
     low = text.lower()
+    use_suggestions = bool(re.search(r"\b(?:use )?(?:the )?suggestions?\b", low))
     volts = [float(v) for v in re.findall(r"(\d+(?:\.\d+)?)\s*v\b", low)]
     amps = [float(a) for a in re.findall(r"(\d+(?:\.\d+)?)\s*a\b", low)]
     khz = re.search(r"(\d+(?:\.\d+)?)\s*khz\b", low)
     pct = re.search(r"(\d+(?:\.\d+)?)\s*%", low)
     ordered = bool(re.search(r"\b(?:from|to)\b", low))
-    questions: list[str] = []
-    vin = vout = None
-    if len(volts) >= 2 and ordered:
-        vin, vout = volts[0], volts[1]
-        if vin <= 0 or vout <= vin or vout > 120:
-            questions.append("The output voltage has to be above the input and at most 120 V. What is the input voltage, and what is the output voltage?")
-            vin = vout = None
-    elif len(volts) >= 2:
-        questions.append("You wrote more than one voltage. Which is the input, and which is the output?")
-    elif len(volts) == 1:
-        questions.append(f"You wrote {volts[0]:g} V. I have not assigned it. Which is the input voltage, and which is the output voltage?")
-    else:
-        questions.append("What is the input voltage?")
-        questions.append("What is the output voltage?")
-    iout = None
-    if not amps:
-        questions.append("What is the continuous output current?")
-    elif amps[0] <= 0 or amps[0] > 20:
-        questions.append("What continuous output current should this booster deliver? Use a value above 0 A and at most 20 A.")
-    else:
+    vin = _labeled_number(low, "input|vin", "v")
+    vout = _labeled_number(low, "output|vout", "v")
+    iout = _labeled_number(low, "current|iout|amps?", "a")
+    freq_hz = _labeled_number(low, "frequency|freq|switching", "khz")
+    eff_pct = _labeled_number(low, "efficiency|eff", "%")
+    if vin is None or vout is None:
+        if len(volts) >= 2 and ordered:
+            vin, vout = volts[0], volts[1]
+    if iout is None and amps:
         iout = amps[0]
-    freq = None
-    if khz is None:
-        questions.append("What switching frequency should the booster use?")
-    else:
-        freq = float(khz.group(1)) * 1000.0
-        if freq <= 0:
-            questions.append("What switching frequency should the booster use?")
-            freq = None
-    eff = None
-    if pct is None:
-        questions.append("What efficiency should I use to calculate the input current?")
-    else:
-        eff = float(pct.group(1)) / 100.0
-        if eff <= 0 or eff > 1:
-            questions.append("What efficiency should I use? Give a percent above 0 and at most 100.")
-            eff = None
+    if freq_hz is None and khz is not None:
+        freq_hz = float(khz.group(1))
+    if eff_pct is None and pct is not None:
+        eff_pct = float(pct.group(1))
+    if use_suggestions:
+        vin = 12.0 if vin is None else vin
+        vout = 48.0 if vout is None else vout
+        iout = 1.0 if iout is None else iout
+        freq_hz = 100.0 if freq_hz is None else freq_hz
+        eff_pct = 85.0 if eff_pct is None else eff_pct
+    questions: list[str] = []
+    if vin is None or vout is None or (vout is not None and vin is not None and (vout <= vin or vout > 120 or vin <= 0)):
+        if vin is not None and vout is not None and (vout <= vin or vout > 120 or vin <= 0):
+            questions.append(_ask_line("The output voltage has to be above the input and at most 120 V. What is the input voltage?", "vin"))
+            questions.append(_ask_line("What is the output voltage?", "vout"))
+        elif len(volts) == 1 and vin is None and vout is None:
+            questions.append(_ask_line(f"You wrote {volts[0]:g} V. I have not assigned it. What is the input voltage?", "vin"))
+            questions.append(_ask_line("What is the output voltage?", "vout"))
+        elif len(volts) >= 2 and vin is None and vout is None:
+            questions.append(_ask_line("You wrote more than one voltage. What is the input voltage?", "vin"))
+            questions.append(_ask_line("What is the output voltage?", "vout"))
+        else:
+            if vin is None:
+                questions.append(_ask_line("What is the input voltage?", "vin"))
+            if vout is None:
+                questions.append(_ask_line("What is the output voltage?", "vout"))
+    if iout is None or iout <= 0 or iout > 20:
+        questions.append(_ask_line("What is the continuous output current? Use a value above 0 A and at most 20 A.", "iout"))
+    if freq_hz is None or freq_hz <= 0:
+        questions.append(_ask_line("What switching frequency should the booster use?", "freq"))
+    if eff_pct is None or eff_pct <= 0 or eff_pct > 100:
+        questions.append(_ask_line("What efficiency should I use to calculate the input current?", "eff"))
     if questions:
         return questions
-    return {"vin": vin, "vout": vout, "iout": iout, "freq": freq, "eff": eff}
+    return {"vin": vin, "vout": vout, "iout": iout, "freq": freq_hz * 1000.0, "eff": eff_pct / 100.0}
 
 
 def design_sonar_booster(state: dict, spec: dict) -> str:

@@ -346,7 +346,7 @@ export function LlmApp() {
             {msgs.map((msg) => (
               <article key={msg.id} className={msg.role === "you" ? "max-w-xl self-end" : "max-w-xl self-start"}>
                 <p className="mb-1 font-mono text-xs text-faint">{msg.role === "you" ? "You" : "SI-LLM"}</p>
-                <p className={"rounded-lg px-3 py-2 text-sm break-words " + (msg.role === "you" ? "bg-raised" : "border border-line bg-surface")}>
+                <p className={"whitespace-pre-wrap rounded-lg px-3 py-2 text-sm break-words " + (msg.role === "you" ? "bg-raised" : "border border-line bg-surface")}>
                   {msg.text}
                 </p>
                 {msg.proposalId && msg.calls && (
