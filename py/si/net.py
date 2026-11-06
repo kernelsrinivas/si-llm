@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-ROOT = Path("/workspace/model")
+ROOT = Path(os.environ.get("SI_MODEL") or Path(__file__).resolve().parents[2] / "model")
 WEIGHTS = ROOT / "si.pt"
 META = ROOT / "meta.json"
 
