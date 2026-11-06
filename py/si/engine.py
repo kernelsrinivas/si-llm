@@ -144,6 +144,7 @@ def empty_work() -> dict:
         "params": {},
         "cell": {},
         "focus": "",
+        "ask": {},
     }
 
 
@@ -191,6 +192,8 @@ def load_state() -> dict:
         work["cell"] = saved["cell"]
     if isinstance(saved.get("focus"), str):
         work["focus"] = saved["focus"]
+    if isinstance(saved.get("ask"), dict):
+        work["ask"] = saved["ask"]
     if isinstance(saved.get("power"), str):
         work["power"] = saved["power"]
     if saved.get("ipc_class") in {"1", "2", "3"}:
@@ -1114,25 +1117,63 @@ def sonar_booster_task(text: str) -> bool:
     return "sonar" in words and any(word.startswith("boost") for word in words)
 
 
-def design_sonar_booster(state: dict, text: str) -> str:
-    """DC boost that feeds a sonar panel. Ping energy and the transducer match are not designed."""
+def sonar_ratings(text: str) -> dict | list[str]:
+    """Missing ratings come back as questions. Nothing is filled in."""
     low = text.lower()
     volts = [float(v) for v in re.findall(r"(\d+(?:\.\d+)?)\s*v\b", low)]
     amps = [float(a) for a in re.findall(r"(\d+(?:\.\d+)?)\s*a\b", low)]
-    vin = 12.0
-    vout = 48.0
-    if len(volts) >= 2:
-        vin, vout = volts[0], volts[1]
-    elif len(volts) == 1:
-        vout = volts[0]
-    iout = amps[0] if amps else 1.5
-    if vin <= 0 or vout <= vin or iout <= 0 or vout > 120 or iout > 20:
-        return "Say a boost that steps up, for example 12 V to 48 V at 1.5 A. Output must be above the input and at most 120 V."
-    freq = 200_000.0
     khz = re.search(r"(\d+(?:\.\d+)?)\s*khz\b", low)
-    if khz:
+    pct = re.search(r"(\d+(?:\.\d+)?)\s*%", low)
+    ordered = bool(re.search(r"\b(?:from|to)\b", low))
+    questions: list[str] = []
+    vin = vout = None
+    if len(volts) >= 2 and ordered:
+        vin, vout = volts[0], volts[1]
+        if vin <= 0 or vout <= vin or vout > 120:
+            questions.append("The output voltage has to be above the input and at most 120 V. What is the input voltage, and what is the output voltage?")
+            vin = vout = None
+    elif len(volts) >= 2:
+        questions.append("You wrote more than one voltage. Which is the input, and which is the output?")
+    elif len(volts) == 1:
+        questions.append(f"You wrote {volts[0]:g} V. I have not assigned it. Which is the input voltage, and which is the output voltage?")
+    else:
+        questions.append("What is the input voltage?")
+        questions.append("What is the output voltage?")
+    iout = None
+    if not amps:
+        questions.append("What is the continuous output current?")
+    elif amps[0] <= 0 or amps[0] > 20:
+        questions.append("What continuous output current should this booster deliver? Use a value above 0 A and at most 20 A.")
+    else:
+        iout = amps[0]
+    freq = None
+    if khz is None:
+        questions.append("What switching frequency should the booster use?")
+    else:
         freq = float(khz.group(1)) * 1000.0
-    eff = 0.90
+        if freq <= 0:
+            questions.append("What switching frequency should the booster use?")
+            freq = None
+    eff = None
+    if pct is None:
+        questions.append("What efficiency should I use to calculate the input current?")
+    else:
+        eff = float(pct.group(1)) / 100.0
+        if eff <= 0 or eff > 1:
+            questions.append("What efficiency should I use? Give a percent above 0 and at most 100.")
+            eff = None
+    if questions:
+        return questions
+    return {"vin": vin, "vout": vout, "iout": iout, "freq": freq, "eff": eff}
+
+
+def design_sonar_booster(state: dict, spec: dict) -> str:
+    """DC boost that feeds a sonar panel. Ping energy and the transducer match are not designed."""
+    vin = float(spec["vin"])
+    vout = float(spec["vout"])
+    iout = float(spec["iout"])
+    freq = float(spec["freq"])
+    eff = float(spec["eff"])
     duty = 1.0 - vin / vout
     iin = iout * vout / (vin * eff)
     ripple = 0.30 * iin
@@ -1195,7 +1236,7 @@ def design_sonar_booster(state: dict, text: str) -> str:
     pcb["released"] = False
     return (
         f"Sonar panel booster. {vin:.0f} V in, {vout:.0f} V out, {iout:.2f} A continuous. "
-        f"Duty {duty:.2f}. Input current {iin:.2f} A at 90% efficiency. "
+        f"Duty {duty:.2f}. Input current {iin:.2f} A at {eff * 100:.0f}% efficiency. "
         f"Inductor {henry * 1e6:.1f} uH at {freq / 1000:.0f} kHz, 30% ripple, peak {ipeak:.2f} A. "
         f"Switch and diode rated {switch_v:.0f} V, switch current {ipeak:.2f} A, diode current {iout:.2f} A. "
         f"Output capacitor at least {cout_uf:.0f} uF (the ripple formula gives {farad * 1e6:.0f} uF; 47 uF is the floor because that formula ignores ESR). "

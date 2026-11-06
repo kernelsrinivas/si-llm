@@ -504,12 +504,26 @@ def _choose_catalog(text: str, hits: list[tuple[str, dict | None]]) -> tuple[str
 
 
 def designer_turn(text: str, approved: bool = False, mode: str | None = None) -> dict:
-    from py.si.engine import _params, _work, design_sonar_booster, load_state, remember, save_state, snapshot, sonar_booster_task
+    from py.si.engine import _params, _work, design_sonar_booster, load_state, remember, save_state, snapshot, sonar_booster_task, sonar_ratings
     from py.si.graph import answer
 
-    if sonar_booster_task(text):
-        state = load_state()
-        report = design_sonar_booster(state, text)
+    state = load_state()
+    pending = (_work(state).get("ask") or {}).get("task") == "sonar-booster"
+    ratings = bool(re.search(r"\d+(?:\.\d+)?\s*(?:v|a|khz|%)\b", text.lower()))
+    if sonar_booster_task(text) or (pending and ratings):
+        prior = (_work(state).get("ask") or {}).get("text") or ""
+        combined = f"{prior} {text}".strip() if pending and not sonar_booster_task(text) else text.strip()
+        if pending and sonar_booster_task(text):
+            combined = f"{prior} {text}".strip()
+        needed = sonar_ratings(combined)
+        if isinstance(needed, list):
+            _work(state)["ask"] = {"task": "sonar-booster", "text": combined}
+            report = "I will not design the sonar panel booster until you give the missing ratings.\n" + "\n".join(f"- {line}" for line in needed)
+            remember(state, text.strip(), report, ["ask"])
+            save_state(state)
+            return pack(report, ["ask"], "power", "ask_spec", snapshot(state))
+        report = design_sonar_booster(state, needed)
+        _work(state)["ask"] = {}
         remember(state, text.strip(), report, ["sonar-booster"])
         save_state(state)
         return pack(report, ["sonar-booster"], "power", "design_sonar", snapshot(state))
@@ -591,6 +605,12 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
         program = predict(model, text, vocab, stoi, "cpu")
         action = program_to_action(program)
         runtime = "pytorch-client"
+    if action and action.get("op") == "ask_spec":
+        state = load_state()
+        reply = "I need the ratings before I design this. What is the input voltage, the output voltage, the continuous current, the switching frequency, and the efficiency?"
+        remember(state, text.strip(), reply, ["ask"])
+        save_state(state)
+        return pack(reply, ["ask"], runtime, "ask_spec", snapshot(state))
     calls = plan(action)
     state = snapshot(load_state())
     op = str(action.get("op") or "")

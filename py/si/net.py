@@ -70,6 +70,7 @@ INTENTS = [
     "CAD_MASS",
     "CAD_STATUS",
     "HELP",
+    "ASK",
 ]
 PKGS = ["usbc", "esp32", "ldo", "imu", "conn", "res", "cap", "mcu", "buck", "ant", "bjt", "diode", "led", "ind", "fet"]
 REFS = ["j1", "u1", "u2", "u3", "r1", "r2", "c1", "c2", "l1", "q1", "d1", "d2", "y1", "tp1", "sw1"]
@@ -572,6 +573,24 @@ def samples(rng: random.Random) -> list[tuple[str, list[str]]]:
             alias = row.aliases[0]
             prompt = alias if len(owners.get(alias, [])) == 1 else f"{prefix[intent]} {alias}"
             add(prompt, [intent, row.family, row.id, none, none])
+    for phrase in (
+        "design the sonar panel booster",
+        "design a complete sonar panel booster",
+        "design sonar panel booster voltage and current",
+        "make a sonar booster",
+        "sonar panel booster",
+        "design the booster",
+        "design a boost converter",
+        "i need a boost",
+        "design the power stage",
+        "build the sonar panel",
+        "sonar booster without ratings",
+        "design the converter",
+        "what booster should i use",
+        "size the sonar booster",
+        "complete sonar panel booster",
+    ):
+        add(phrase, ["ASK", none, none, none, none])
     return rows
 
 
@@ -1082,6 +1101,8 @@ def bind_slots(words: list[str], prog: list[str]) -> list[str]:
 
 def program_to_action(prog: list[str]) -> dict:
     intent = prog[0] if prog else "HELP"
+    if intent == "ASK":
+        return {"op": "ask_spec"}
     a = prog[1] if len(prog) > 1 else "<none>"
     b = prog[2] if len(prog) > 2 else "<none>"
     c = prog[3] if len(prog) > 3 else "<none>"
@@ -1296,6 +1317,84 @@ def load():
     model.eval()
     meta = json.loads(META.read_text()) if META.exists() else {}
     return model, vocab, stoi_of(vocab), meta
+
+
+def finetune() -> dict:
+    """Add the ASK intent to the saved checkpoint without throwing away the trained weights."""
+    rng = random.Random(7)
+    vocab = build_vocab()
+    stoi = stoi_of(vocab)
+    blob = torch.load(WEIGHTS, map_location="cpu", weights_only=False)
+    old_vocab = list(blob["vocab"])
+    old = GPT(len(old_vocab))
+    old.load_state_dict(blob["model"])
+    model = GPT(len(vocab))
+    with torch.no_grad():
+        old_at = {tok: i for i, tok in enumerate(old_vocab)}
+        for i, tok in enumerate(vocab):
+            j = old_at.get(tok)
+            if j is None:
+                continue
+            model.tok.weight[i].copy_(old.tok.weight[j])
+            model.head.weight[i].copy_(old.head.weight[j])
+        model.pos.load_state_dict(old.pos.state_dict())
+        model.blocks.load_state_dict(old.blocks.state_dict())
+        model.ln_f.load_state_dict(old.ln_f.state_dict())
+    rows = samples(rng)
+    train_rows, test_rows = split_rows(rows, rng)
+    ask_rows = [row for row in train_rows if row[1][0] == "ASK"]
+    # Keep the old skill, and show the new question rows much more often.
+    train_rows = train_rows + ask_rows * 40
+    device = torch.device("cpu")
+    torch.set_num_threads(4)
+    model = model.to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0.01)
+    pad = stoi["<pad>"]
+    board_rows = [row for row in test_rows if row[1][0] in {"POWER", "ROBOT", "COMPUTER", "SENSOR"}]
+    ask_test = [row for row in test_rows if row[1][0] == "ASK"]
+    best_boards = 0.0
+    for epoch in range(1, 3):
+        rng.shuffle(train_rows)
+        model.train()
+        total = 0.0
+        seen = 0
+        for i in range(0, len(train_rows), 48):
+            chunk = train_rows[i : i + 48]
+            x, y = batchify(chunk, stoi, pad)
+            logits = model(x.to(device))
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1).to(device), ignore_index=-100)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            total += float(loss.detach()) * len(chunk)
+            seen += len(chunk)
+        boards = eval_acc(model, board_rows, vocab, stoi, device, raw=True, limit=10_000)
+        asks = eval_acc(model, ask_test, vocab, stoi, device, raw=True, limit=10_000)
+        print(f"finetune {epoch} loss {total / max(1, seen):.3f} boards {boards:.3f} ask {asks:.3f}", flush=True)
+        if boards >= best_boards:
+            best_boards = boards
+            tmp = WEIGHTS.with_suffix(".tmp")
+            torch.save({"model": model.state_dict(), "vocab": vocab}, tmp)
+            tmp.replace(WEIGHTS)
+    model.load_state_dict(torch.load(WEIGHTS, map_location="cpu", weights_only=False)["model"])
+    raw_acc = eval_acc(model, test_rows, vocab, stoi, device, raw=True, limit=10_000)
+    payload = {
+        "heldout_exact": raw_acc,
+        "heldout_bound": eval_acc(model, test_rows, vocab, stoi, device, raw=False, limit=10_000),
+        "epoch": 3,
+        "boards": best_boards,
+        "train_rows": len(train_rows),
+        "test_rows": len(test_rows),
+        "params": sum(p.numel() for p in model.parameters()),
+        "vocab": len(vocab),
+        "width": N_EMBD,
+        "layers": N_LAYER,
+        "dropout": DROP,
+        "ask": eval_acc(model, ask_test, vocab, stoi, device, raw=True, limit=10_000),
+    }
+    META.write_text(json.dumps(payload, indent=2))
+    print(json.dumps(payload), flush=True)
+    return payload
 
 
 if __name__ == "__main__":
