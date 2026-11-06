@@ -36,3 +36,18 @@ jobs:
         with:
           name: ${{ matrix.name }}
           path: native/si/target/${{ matrix.target }}/release/si*
+
+  cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the same C++ file Xcode compiles
+        run: g++ -std=c++17 -O2 -o si native/xcode/si/main.cpp && ./si --help
+
+  xcode:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with Xcode
+        run: xcodebuild -project native/xcode/si.xcodeproj -scheme si -configuration Release -destination "platform=macOS" build
+
