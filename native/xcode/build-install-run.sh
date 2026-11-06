@@ -59,6 +59,16 @@ chmod 755 "$dest"
 echo "installed ${dest}"
 
 export SI_MODEL="${root}/model"
+export PYTHONPATH="${root}${PYTHONPATH:+:$PYTHONPATH}"
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required to run the model server." >&2
+  exit 1
+fi
+if ! python3 -c "import py.si.server" >>/tmp/si-llm.log 2>&1; then
+  echo "The model server cannot start. Install Python with PyTorch in this project, then run this script again." >&2
+  tail -20 /tmp/si-llm.log >&2 || true
+  exit 1
+fi
 if ! curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8766/health; then
   python3 -m py.si.tool_server pcb >>/tmp/si-pcb.log 2>&1 &
 fi
