@@ -185,14 +185,8 @@ std::string ask(const std::string &text, bool yes, const std::string &mode) {
 }
 
 void help() {
-  std::cout << "si is the model client. The server runs the trained model and MCP.\n"
-            << "si mode <auto|semi|man>\n"
-            << "si mcp add <name> --url <url>\n"
-            << "si mcp list\n"
-            << "si mcp remove <name>\n"
-            << "si \"desktop motherboard\"\n"
-            << "si --yes \"place a resistor r1 at 10 12\"\n"
-            << "Server: " << model_url() << "\n";
+  std::cout << "si \"what is a buck converter\"\n"
+            << "The server must already be running. Start it with: sh startup.sh\n";
 }
 
 int mcp(const std::vector<std::string> &argv) {
