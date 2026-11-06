@@ -436,9 +436,9 @@ def grant(calls: list[tuple[str, str, dict]]) -> None:
     save_config(cfg)
 
 
-def pack(reply: str, commands: list[str], runtime: str, op: str, state: dict, needs: bool = False, proposal_id: str = "", calls: list | None = None) -> dict:
+def pack(reply: str, commands: list[str], runtime: str, op: str, state: dict, needs: bool = False, proposal_id: str = "", calls: list | None = None, question: dict | None = None, suggestions: list | None = None) -> dict:
     _model, _vocab, _stoi, meta = model_bundle()
-    return {
+    body = {
         "ok": True,
         "reply": reply,
         "commands": commands,
@@ -455,6 +455,11 @@ def pack(reply: str, commands: list[str], runtime: str, op: str, state: dict, ne
             "params": meta.get("params"),
         },
     }
+    if question:
+        body["question"] = question
+    if suggestions:
+        body["suggestions"] = suggestions
+    return body
 
 
 def execute(calls: list[tuple[str, str, dict]], runtime: str, program: list[str], op: str) -> dict:
@@ -504,29 +509,44 @@ def _choose_catalog(text: str, hits: list[tuple[str, dict | None]]) -> tuple[str
 
 
 def designer_turn(text: str, approved: bool = False, mode: str | None = None) -> dict:
-    from py.si.engine import _params, _work, design_sonar_booster, load_state, remember, save_state, snapshot, sonar_booster_task, sonar_ratings
+    from py.si.engine import _params, _work, absorb_answer, design_sonar_booster, load_state, remember, save_state, snapshot, sonar_booster_task, sonar_decision, sonar_suggestions
     from py.si.graph import answer
 
     state = load_state()
-    pending = (_work(state).get("ask") or {}).get("task") == "sonar-booster"
-    ratings = bool(re.search(r"\d+(?:\.\d+)?\s*(?:v|a|khz|%)\b", text.lower())) or bool(re.search(r"\b(?:use )?(?:the )?suggestions?\b", text.lower()))
-    if sonar_booster_task(text) or (pending and ratings):
-        prior = (_work(state).get("ask") or {}).get("text") or ""
-        combined = f"{prior} {text}".strip() if pending and not sonar_booster_task(text) else text.strip()
-        if pending and sonar_booster_task(text):
-            combined = f"{prior} {text}".strip()
-        needed = sonar_ratings(combined)
-        if isinstance(needed, list):
-            _work(state)["ask"] = {"task": "sonar-booster", "text": combined}
-            report = "I will not design the sonar panel booster until you answer. Pick a suggestion or type your own value.\n" + "\n".join(needed)
-            remember(state, text.strip(), report, ["ask"])
+    pending = _work(state).get("ask") or {}
+    waiting = pending.get("task") == "sonar-booster"
+    ratings = bool(re.search(r"\d+(?:\.\d+)?\s*(?:v|a|khz|%)?\b", text.lower())) or bool(re.search(r"\b(?:use )?(?:the )?suggestions?\b", text.lower()))
+    if sonar_booster_task(text) or (waiting and ratings):
+        prior = pending.get("text") or ""
+        asked = int(pending.get("n") or 0)
+        field = str(pending.get("field") or "")
+        utterance = text.strip()
+        if waiting and not sonar_booster_task(text):
+            combined = absorb_answer(field, utterance, prior) if field else f"{prior} {utterance}".strip()
+        else:
+            combined = f"{prior} {utterance}".strip() if waiting else utterance
+        prefer = None
+        if not waiting:
+            model, vocab, stoi, _meta = model_bundle()
+            program = predict(model, utterance, vocab, stoi, "cpu")
+            if program and program[0] == "ASK" and program[1] in {"vin", "vout", "iout", "freq", "eff"}:
+                prefer = program[1]
+        decision = sonar_decision(combined, asked, prefer)
+        if decision["kind"] == "ask":
+            card = decision["card"]
+            field = str(card.get("field") or "")
+            options = ", ".join(option["label"] + (" (recommended)" if i == card["recommendedIndex"] else "") for i, option in enumerate(card["options"]))
+            report = f"{card['header']}\n{card['question']}\nSuggestions: {options}\nCustom: type your own value"
+            _work(state)["ask"] = {"task": "sonar-booster", "text": combined, "field": field, "n": asked + 1}
+            remember(state, utterance, report, ["ask"])
             save_state(state)
-            return pack(report, ["ask"], "power", "ask_spec", snapshot(state))
-        report = design_sonar_booster(state, needed)
+            return pack(report, ["ask"], "power", "ask_user", snapshot(state), question=card)
+        note = decision.get("note") or ""
+        report = (note + " " if note else "") + design_sonar_booster(state, decision["spec"])
         _work(state)["ask"] = {}
-        remember(state, text.strip(), report, ["sonar-booster"])
+        remember(state, utterance, report, ["sonar-booster"])
         save_state(state)
-        return pack(report, ["sonar-booster"], "power", "design_sonar", snapshot(state))
+        return pack(report, ["sonar-booster"], "power", "design_sonar", snapshot(state), suggestions=sonar_suggestions(decision["spec"]))
 
     hit = answer(text, float(_params(load_state())["min_clearance_mm"]))
     power_action = None
