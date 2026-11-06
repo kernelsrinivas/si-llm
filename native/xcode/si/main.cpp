@@ -184,6 +184,149 @@ std::string ask(const std::string &text, bool yes, const std::string &mode) {
   return http_post("/cli", body.str());
 }
 
+struct Choice {
+  std::string label;
+  std::string prompt;
+};
+
+std::string json_object(const std::string &raw, const std::string &key) {
+  auto at = raw.find("\"" + key + "\"");
+  if (at == std::string::npos) return "";
+  auto colon = raw.find(':', at + key.size() + 2);
+  if (colon == std::string::npos) return "";
+  auto brace = raw.find_first_not_of(" \t\r\n", colon + 1);
+  if (brace == std::string::npos || raw[brace] != '{') return "";
+  int depth = 0;
+  bool inside = false;
+  for (std::size_t i = brace; i < raw.size(); ++i) {
+    char c = raw[i];
+    if (c == '"' && (i == brace || raw[i - 1] != '\\')) inside = !inside;
+    if (inside) continue;
+    if (c == '{') ++depth;
+    if (c == '}' && --depth == 0) return raw.substr(brace, i - brace + 1);
+  }
+  return "";
+}
+
+std::string json_array(const std::string &raw, const std::string &key) {
+  auto at = raw.find("\"" + key + "\"");
+  if (at == std::string::npos) return "";
+  auto colon = raw.find(':', at + key.size() + 2);
+  if (colon == std::string::npos) return "";
+  auto brace = raw.find_first_not_of(" \t\r\n", colon + 1);
+  if (brace == std::string::npos || raw[brace] != '[') return "";
+  int depth = 0;
+  bool inside = false;
+  for (std::size_t i = brace; i < raw.size(); ++i) {
+    char c = raw[i];
+    if (c == '"' && (i == brace || raw[i - 1] != '\\')) inside = !inside;
+    if (inside) continue;
+    if (c == '[') ++depth;
+    if (c == ']' && --depth == 0) return raw.substr(brace, i - brace + 1);
+  }
+  return "";
+}
+
+std::vector<Choice> choices_in(const std::string &blob) {
+  std::vector<Choice> out;
+  std::size_t at = 0;
+  while ((at = blob.find("\"label\"", at)) != std::string::npos) {
+    Choice choice;
+    choice.label = json_string_after(blob.substr(at), "label");
+    auto prompt_at = blob.find("\"prompt\"", at);
+    if (prompt_at == std::string::npos) break;
+    choice.prompt = json_string_after(blob.substr(prompt_at), "prompt");
+    if (!choice.label.empty() && !choice.prompt.empty()) out.push_back(choice);
+    at = prompt_at + 8;
+  }
+  return out;
+}
+
+int recommended_index(const std::string &blob) {
+  auto at = blob.find("\"recommendedIndex\"");
+  if (at == std::string::npos) return 0;
+  auto colon = blob.find(':', at);
+  if (colon == std::string::npos) return 0;
+  return std::atoi(blob.c_str() + colon + 1);
+}
+
+std::string approved(std::string raw, bool yes) {
+  if (!json_true(raw, "needsApproval") || yes) return raw;
+  print_turn(raw);
+#if !defined(_WIN32)
+  if (isatty(0)) {
+    std::cout << "Allow? [y]es / [a]lways / [n]o: " << std::flush;
+    std::string line;
+    if (!std::getline(std::cin, line)) return "";
+    std::string answer = lower(line);
+    std::string decision = (answer == "y" || answer == "yes") ? "allow" : (answer == "a" || answer == "always") ? "always" : "deny";
+    if (decision == "deny") {
+      std::cout << "Not sent.\n";
+      return "";
+    }
+    return http_post("/approve", std::string("{\"proposalId\":\"") + json_string_after(raw, "proposalId") + "\",\"decision\":\"" + decision + "\"}");
+  }
+#endif
+  std::cout << "Not sent. Pass --yes to allow once.\n";
+  return "";
+}
+
+std::string pick_line(const std::vector<Choice> &choices, int recommended, const std::string &custom) {
+  for (std::size_t i = 0; i < choices.size(); ++i) {
+    std::cout << "  " << (i + 1) << ". " << choices[i].label;
+    if (static_cast<int>(i) == recommended) std::cout << " (recommended)";
+    std::cout << "\n";
+  }
+  std::cout << custom << std::flush;
+  std::string line;
+  if (!std::getline(std::cin, line)) return "";
+  line = line.substr(0, line.find_last_not_of(" \t\r") + 1);
+  if (line.empty()) return "";
+  if (line.size() == 1 && line[0] >= '1' && line[0] < '1' + static_cast<char>(choices.size())) {
+    return choices[static_cast<std::size_t>(line[0] - '1')].prompt;
+  }
+  return line;
+}
+
+int converse(std::string text, bool yes, const std::string &mode) {
+  std::string raw = ask(text, yes, mode);
+  raw = approved(raw, yes);
+  if (raw.empty()) return 2;
+  for (int turn = 0; turn < 8; ++turn) {
+    std::string card = json_object(raw, "question");
+    if (card.empty()) break;
+#if defined(_WIN32)
+    break;
+#else
+    if (!isatty(0)) break;
+    print_turn(raw);
+    std::string next = pick_line(choices_in(card), recommended_index(card), "Number, or your own value: ");
+    if (next.empty()) return 2;
+    raw = approved(ask(next, yes, mode), yes);
+    if (raw.empty()) return 2;
+#endif
+  }
+  print_turn(raw);
+  auto suggestions = choices_in(json_array(raw, "suggestions"));
+  if (suggestions.empty()) return 0;
+  std::cout << "Next:\n";
+#if defined(_WIN32)
+  for (std::size_t i = 0; i < suggestions.size(); ++i) std::cout << "  " << (i + 1) << ". " << suggestions[i].label << "\n";
+  return 0;
+#else
+  if (!isatty(0)) {
+    for (std::size_t i = 0; i < suggestions.size(); ++i) std::cout << "  " << (i + 1) << ". " << suggestions[i].label << "\n";
+    return 0;
+  }
+  std::string next = pick_line(suggestions, -1, "Number, or enter to stop: ");
+  if (next.empty()) return 0;
+  raw = approved(ask(next, yes, mode), yes);
+  if (raw.empty()) return 2;
+  print_turn(raw);
+  return 0;
+#endif
+}
+
 void help() {
   std::cout << "si \"what is a buck converter\"\n"
             << "The server must already be running. Start it with: sh startup.sh\n";
@@ -264,30 +407,7 @@ int main(int argc, char **argv) {
       if (i) text.push_back(' ');
       text += args[i];
     }
-    std::string raw = ask(text, yes, mode);
-    if (json_true(raw, "needsApproval") && !yes) {
-      print_turn(raw);
-#if !defined(_WIN32)
-      if (isatty(0)) {
-        std::cout << "Allow? [y]es / [a]lways / [n]o: " << std::flush;
-        std::string line;
-        if (!std::getline(std::cin, line)) return 2;
-        std::string answer = lower(line);
-        std::string decision = (answer == "y" || answer == "yes") ? "allow" : (answer == "a" || answer == "always") ? "always" : "deny";
-        if (decision == "deny") {
-          std::cout << "Not sent.\n";
-          return 2;
-        }
-        raw = http_post("/approve", std::string("{\"proposalId\":\"") + json_string_after(raw, "proposalId") + "\",\"decision\":\"" + decision + "\"}");
-      } else
-#endif
-      {
-        std::cout << "Not sent. Pass --yes to allow once.\n";
-        return 2;
-      }
-    }
-    print_turn(raw);
-    return 0;
+    return converse(text, yes, mode);
   } catch (const std::exception &err) {
     std::cerr << err.what() << "\n";
     return 1;

@@ -1136,60 +1136,140 @@ def _labeled_number(low: str, names: str, unit: str) -> float | None:
     return float(found.group(1)) if found else None
 
 
-def sonar_ratings(text: str) -> dict | list[str]:
-    """Missing ratings come back as questions with suggestions. Nothing is filled in unless the user asks for the suggestions or types a value."""
+_CARDS = (
+    {
+        "field": "vout",
+        "header": "Output",
+        "question": "What output voltage does the sonar panel need?",
+        "reason": "Output voltage changes the duty cycle, the switch rating, and the feedback divider.",
+        "options": (
+            {"label": "48 V", "description": "A common panel rail.", "prompt": "output 48v"},
+            {"label": "60 V", "description": "A higher transmit rail.", "prompt": "output 60v"},
+        ),
+    },
+    {
+        "field": "iout",
+        "header": "Current",
+        "question": "What continuous output current does it need?",
+        "reason": "Current changes the inductor, the switch, and the copper width.",
+        "options": (
+            {"label": "1.5 A", "description": "A small panel.", "prompt": "current 1.5a"},
+            {"label": "1 A", "description": "A light load.", "prompt": "current 1a"},
+            {"label": "2 A", "description": "A heavier panel.", "prompt": "current 2a"},
+        ),
+    },
+    {
+        "field": "vin",
+        "header": "Input",
+        "question": "What is the input voltage?",
+        "reason": "Input voltage changes the duty cycle and the input current.",
+        "options": (
+            {"label": "12 V", "description": "A 12 V battery.", "prompt": "input 12v"},
+            {"label": "24 V", "description": "A 24 V battery.", "prompt": "input 24v"},
+        ),
+    },
+)
+_FILL = {"vout": ("output", "v", 48.0), "iout": ("current", "a", 1.5), "vin": ("input", "v", 12.0), "freq": ("frequency", "khz", 200.0), "eff": ("efficiency", "%", 90.0)}
+
+
+def _card(field: str) -> dict:
+    row = next(item for item in _CARDS if item["field"] == field)
+    return {
+        "header": row["header"],
+        "question": row["question"],
+        "options": [dict(option) for option in row["options"]],
+        "recommendedIndex": 0,
+        "allowFreeText": True,
+        "reason": row["reason"],
+        "field": row["field"],
+    }
+
+
+def _known_ratings(text: str) -> dict[str, float]:
     low = text.lower()
-    use_suggestions = bool(re.search(r"\b(?:use )?(?:the )?suggestions?\b", low))
+    known: dict[str, float] = {}
+    vin = _labeled_number(low, "input|vin", "v")
+    vout = _labeled_number(low, "output|vout", "v")
+    iout = _labeled_number(low, "current|iout|amps?", "a")
+    freq = _labeled_number(low, "frequency|freq|switching", "khz")
+    eff = _labeled_number(low, "efficiency|eff", "%")
     volts = [float(v) for v in re.findall(r"(\d+(?:\.\d+)?)\s*v\b", low)]
     amps = [float(a) for a in re.findall(r"(\d+(?:\.\d+)?)\s*a\b", low)]
     khz = re.search(r"(\d+(?:\.\d+)?)\s*khz\b", low)
     pct = re.search(r"(\d+(?:\.\d+)?)\s*%", low)
-    ordered = bool(re.search(r"\b(?:from|to)\b", low))
-    vin = _labeled_number(low, "input|vin", "v")
-    vout = _labeled_number(low, "output|vout", "v")
-    iout = _labeled_number(low, "current|iout|amps?", "a")
-    freq_hz = _labeled_number(low, "frequency|freq|switching", "khz")
-    eff_pct = _labeled_number(low, "efficiency|eff", "%")
-    if vin is None or vout is None:
-        if len(volts) >= 2 and ordered:
-            vin, vout = volts[0], volts[1]
+    if (vin is None or vout is None) and len(volts) >= 2 and re.search(r"\b(?:from|to)\b", low):
+        vin, vout = volts[0], volts[1]
     if iout is None and amps:
         iout = amps[0]
-    if freq_hz is None and khz is not None:
-        freq_hz = float(khz.group(1))
-    if eff_pct is None and pct is not None:
-        eff_pct = float(pct.group(1))
-    if use_suggestions:
-        vin = 12.0 if vin is None else vin
-        vout = 48.0 if vout is None else vout
-        iout = 1.0 if iout is None else iout
-        freq_hz = 100.0 if freq_hz is None else freq_hz
-        eff_pct = 85.0 if eff_pct is None else eff_pct
-    questions: list[str] = []
-    if vin is None or vout is None or (vout is not None and vin is not None and (vout <= vin or vout > 120 or vin <= 0)):
-        if vin is not None and vout is not None and (vout <= vin or vout > 120 or vin <= 0):
-            questions.append(_ask_line("The output voltage has to be above the input and at most 120 V. What is the input voltage?", "vin"))
-            questions.append(_ask_line("What is the output voltage?", "vout"))
-        elif len(volts) == 1 and vin is None and vout is None:
-            questions.append(_ask_line(f"You wrote {volts[0]:g} V. I have not assigned it. What is the input voltage?", "vin"))
-            questions.append(_ask_line("What is the output voltage?", "vout"))
-        elif len(volts) >= 2 and vin is None and vout is None:
-            questions.append(_ask_line("You wrote more than one voltage. What is the input voltage?", "vin"))
-            questions.append(_ask_line("What is the output voltage?", "vout"))
-        else:
-            if vin is None:
-                questions.append(_ask_line("What is the input voltage?", "vin"))
-            if vout is None:
-                questions.append(_ask_line("What is the output voltage?", "vout"))
-    if iout is None or iout <= 0 or iout > 20:
-        questions.append(_ask_line("What is the continuous output current? Use a value above 0 A and at most 20 A.", "iout"))
-    if freq_hz is None or freq_hz <= 0:
-        questions.append(_ask_line("What switching frequency should the booster use?", "freq"))
-    if eff_pct is None or eff_pct <= 0 or eff_pct > 100:
-        questions.append(_ask_line("What efficiency should I use to calculate the input current?", "eff"))
-    if questions:
-        return questions
-    return {"vin": vin, "vout": vout, "iout": iout, "freq": freq_hz * 1000.0, "eff": eff_pct / 100.0}
+    if freq is None and khz is not None:
+        freq = float(khz.group(1))
+    if eff is None and pct is not None:
+        eff = float(pct.group(1))
+    if vin is not None and vin > 0:
+        known["vin"] = vin
+    if vout is not None and vout > 0:
+        known["vout"] = vout
+    if iout is not None and 0 < iout <= 20:
+        known["iout"] = iout
+    if freq is not None and freq > 0:
+        known["freq"] = freq
+    if eff is not None and 0 < eff <= 100:
+        known["eff"] = eff
+    return known
+
+
+def absorb_answer(field: str, utterance: str, combined: str) -> str:
+    low = utterance.lower().strip()
+    bare = re.fullmatch(r"(\d+(?:\.\d+)?)(?:\s*(v|a|khz|%))?", low)
+    if bare is None:
+        return f"{combined} {utterance}".strip()
+    number = bare.group(1)
+    spoken, _unit, _value = _FILL[field]
+    suffix = {"v": "v", "a": "a", "khz": "khz", "%": "%"}[_FILL[field][1]]
+    return f"{combined} {spoken} {number}{suffix}".strip()
+
+
+def sonar_decision(text: str, asked: int, prefer: str | None = None) -> dict:
+    """One question per turn. After three questions the remaining ratings use the recommended option and say so."""
+    low = text.lower()
+    known = _known_ratings(text)
+    if re.search(r"\b(?:use )?(?:the )?suggestions?\b", low):
+        for field, (_spoken, _unit, value) in _FILL.items():
+            known.setdefault(field, value)
+    missing = [field for field in ("vout", "iout", "vin", "freq", "eff") if field not in known]
+    if prefer in missing:
+        missing = [prefer] + [field for field in missing if field != prefer]
+    note = ""
+    if missing and asked >= 3:
+        used = []
+        for field in missing:
+            _spoken, unit, value = _FILL[field]
+            known[field] = value
+            used.append(f"{value:g} {unit}")
+        missing = []
+        note = "I used the recommended " + ", ".join(used) + " for the ratings still open."
+    if missing:
+        return {"kind": "ask", "card": _card(missing[0]), "known": known}
+    spec = {
+        "vin": known["vin"],
+        "vout": known["vout"],
+        "iout": known["iout"],
+        "freq": known["freq"] * 1000.0,
+        "eff": known["eff"] / 100.0,
+    }
+    if spec["vout"] <= spec["vin"] or spec["vout"] > 120:
+        return {"kind": "ask", "card": _card("vout"), "known": {key: value for key, value in known.items() if key != "vout"}}
+    return {"kind": "design", "spec": spec, "note": note}
+
+
+def sonar_suggestions(spec: dict) -> list[dict]:
+    freq = spec["freq"] / 1000.0
+    eff = spec["eff"] * 100.0
+    return [
+        {"label": "Use 2 A out", "prompt": f"design sonar panel booster input {spec['vin']:g}v output {spec['vout']:g}v current 2a frequency {freq:g}khz efficiency {eff:g}%", "type": "action"},
+        {"label": "Use 24 V in", "prompt": f"design sonar panel booster input 24v output {spec['vout']:g}v current {spec['iout']:g}a frequency {freq:g}khz efficiency {eff:g}%", "type": "action"},
+        {"label": "Show the board", "prompt": "show the board", "type": "navigation"},
+    ]
 
 
 def design_sonar_booster(state: dict, spec: dict) -> str:

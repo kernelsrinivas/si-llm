@@ -80,6 +80,7 @@ SLOTS = [
     "all", "0", "45", "100", "150", "170", "180", "200", "244", "270", "305",
     "vcc", "vdd", "vss", "tx", "rx", "clk", "sda", "scl", "mosi", "miso", "sck", "cs", "can", "5v",
     "soic", "qfp", "qfn", "tqfp", "bga", "dip", "sip", "sop", "ssop", "tsop", "dfn", "lga", "wlcsp", "pga", "sot", "crystal",
+    "vin", "vout", "iout", "freq", "eff",
 ]
 DISCIPLINES = ["pin", "decap", "power", "io", "clock", "reset", "boot", "thermal", "si", "pi"]
 INDUSTRIES = [
@@ -590,7 +591,7 @@ def samples(rng: random.Random) -> list[tuple[str, list[str]]]:
         "size the sonar booster",
         "complete sonar panel booster",
     ):
-        add(phrase, ["ASK", none, none, none, none])
+        add(phrase, ["ASK", "vout", none, none, none])
     return rows
 
 
