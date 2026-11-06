@@ -592,6 +592,90 @@ def samples(rng: random.Random) -> list[tuple[str, list[str]]]:
         "complete sonar panel booster",
     ):
         add(phrase, ["ASK", "vout", none, none, none])
+    for phrase in (
+        "run the entire pcb flow",
+        "entire pcb flow",
+        "whole pcb flow",
+        "complete pcb flow",
+        "full pcb flow",
+        "every pcb stage",
+        "from schematic to fabrication",
+        "schematic layout footprint simulation fabrication bom",
+        "schematic then pcb then design check then fab",
+        "do the whole design flow",
+        "run every pcb stage",
+        "schematic layout simulation 3d drc fab bom",
+        "train the pcb flow",
+        "pcb from schematic through assembly",
+        "finish schematic layout and fabrication",
+        "entire board flow",
+        "walk the pcb flow",
+        "schematic erc layout footprint drc simulation 3d fabrication bom assembly",
+        "start at the schematic and finish at fabrication",
+        "run schematic layout footprint simulation design check 3d fab and the bom",
+        "complete flow from symbols to gerber",
+        "full flow schematic to assembly",
+        "do all pcb stages in order",
+        "schematic layout footprint simulation fabrication assembly",
+        "entire fabrication flow",
+        "whole design from erc to bom",
+    ):
+        add(phrase, ["PCB_FLOW", none, none, none, none])
+    stages = {
+        "SCH_ERC": (
+            "schematic stage",
+            "run the schematic stage",
+            "check the schematic stage of the flow",
+            "electrical rule stage",
+        ),
+        "PCB_STATUS": (
+            "layout stage",
+            "show the layout stage",
+            "what is placed in the flow",
+        ),
+        "PCB_DRC": (
+            "design check stage",
+            "run the design check stage",
+            "drc stage of the flow",
+        ),
+        "SIM_DC": (
+            "simulation stage",
+            "run the simulation stage",
+            "dc stage of the flow",
+        ),
+        "SIM_TRAN": (
+            "transient stage of the flow",
+            "run the transient stage",
+        ),
+        "VIEW_3D": (
+            "3d stage",
+            "run the 3d stage",
+            "show the 3d stage of the flow",
+        ),
+        "FAB_STACK": (
+            "stackup stage",
+            "run the stackup stage",
+            "fabrication stack stage",
+        ),
+        "FAB_PACK": (
+            "fabrication stage",
+            "run the fabrication stage",
+            "gerber stage of the flow",
+        ),
+        "ASM_BOM": (
+            "bom stage",
+            "run the bom stage",
+            "bill of materials stage",
+        ),
+        "ASM_POS": (
+            "assembly stage",
+            "run the assembly stage",
+            "pick and place stage of the flow",
+        ),
+    }
+    for intent, phrases in stages.items():
+        for phrase in phrases:
+            add(phrase, [intent, none, none, none, none])
     return rows
 
 
@@ -804,6 +888,11 @@ def board_program(words: list[str]) -> list[str] | None:
 def bind_slots(words: list[str], prog: list[str]) -> list[str]:
     """Keep the model's intent. Fill arguments from names and numbers actually said."""
     intent = prog[0]
+    flow_words = ("schematic", "layout", "footprint", "simulation", "fabrication", "bom", "drc", "assembly")
+    named = [word for word in flow_words if word in words]
+    whole = any(word in words for word in ("entire", "whole", "complete", "full", "every"))
+    if len(named) >= 3 or (whole and "flow" in words):
+        return ["PCB_FLOW", "<none>", "<none>", "<none>", "<none>"]
     pkgs = []
     for word in words:
         if word in PKGS and word not in pkgs:
@@ -1014,6 +1103,9 @@ def bind_slots(words: list[str], prog: list[str]) -> list[str]:
         return ["PCB_DRC", none, none, none, none]
     if "pick" in words or "centroid" in words or ("asm" in words and "pos" in words):
         return ["ASM_POS", none, none, none, none]
+    flow_hits = [word for word in ("schematic", "layout", "footprint", "simulation", "fabrication", "bom", "drc") if word in words]
+    if len(flow_hits) >= 3 or ("entire" in words and "pcb" in words) or ("whole" in words and ("flow" in words or "pcb" in words)):
+        return ["PCB_FLOW", none, none, none, none]
     if "bom" in words or "bill" in words:
         return ["ASM_BOM", none, none, none, none]
     if "fabrication" in words or ("fab" in words and "gerber" in words):
@@ -1344,8 +1436,9 @@ def finetune() -> dict:
     rows = samples(rng)
     train_rows, test_rows = split_rows(rows, rng)
     ask_rows = [row for row in train_rows if row[1][0] == "ASK"]
-    # Keep the old skill, and show the new question rows much more often.
-    train_rows = train_rows + ask_rows * 40
+    flow_rows = [row for row in train_rows if row[1][0] == "PCB_FLOW"]
+    # Keep the old skill, and show the question and full-flow rows much more often.
+    train_rows = train_rows + ask_rows * 40 + flow_rows * 30
     device = torch.device("cpu")
     torch.set_num_threads(4)
     model = model.to(device)
@@ -1353,7 +1446,9 @@ def finetune() -> dict:
     pad = stoi["<pad>"]
     board_rows = [row for row in test_rows if row[1][0] in {"POWER", "ROBOT", "COMPUTER", "SENSOR"}]
     ask_test = [row for row in test_rows if row[1][0] == "ASK"]
+    flow_test = [row for row in test_rows if row[1][0] == "PCB_FLOW"]
     best_boards = 0.0
+    best_flow = -1.0
     for epoch in range(1, 3):
         rng.shuffle(train_rows)
         model.train()
@@ -1371,9 +1466,11 @@ def finetune() -> dict:
             seen += len(chunk)
         boards = eval_acc(model, board_rows, vocab, stoi, device, raw=True, limit=10_000)
         asks = eval_acc(model, ask_test, vocab, stoi, device, raw=True, limit=10_000)
-        print(f"finetune {epoch} loss {total / max(1, seen):.3f} boards {boards:.3f} ask {asks:.3f}", flush=True)
-        if boards >= best_boards:
+        flows = eval_acc(model, flow_test, vocab, stoi, device, raw=True, limit=10_000)
+        print(f"finetune {epoch} loss {total / max(1, seen):.3f} boards {boards:.3f} ask {asks:.3f} flow {flows:.3f}", flush=True)
+        if boards + 1e-9 >= best_boards and flows >= best_flow:
             best_boards = boards
+            best_flow = flows
             tmp = WEIGHTS.with_suffix(".tmp")
             torch.save({"model": model.state_dict(), "vocab": vocab}, tmp)
             tmp.replace(WEIGHTS)
@@ -1392,6 +1489,7 @@ def finetune() -> dict:
         "layers": N_LAYER,
         "dropout": DROP,
         "ask": eval_acc(model, ask_test, vocab, stoi, device, raw=True, limit=10_000),
+        "flow": eval_acc(model, flow_test, vocab, stoi, device, raw=True, limit=10_000),
     }
     META.write_text(json.dumps(payload, indent=2))
     print(json.dumps(payload), flush=True)
