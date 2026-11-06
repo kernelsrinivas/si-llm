@@ -504,8 +504,15 @@ def _choose_catalog(text: str, hits: list[tuple[str, dict | None]]) -> tuple[str
 
 
 def designer_turn(text: str, approved: bool = False, mode: str | None = None) -> dict:
-    from py.si.engine import _params, _work, remember, save_state
+    from py.si.engine import _params, _work, design_sonar_booster, load_state, remember, save_state, snapshot, sonar_booster_task
     from py.si.graph import answer
+
+    if sonar_booster_task(text):
+        state = load_state()
+        report = design_sonar_booster(state, text)
+        remember(state, text.strip(), report, ["sonar-booster"])
+        save_state(state)
+        return pack(report, ["sonar-booster"], "power", "design_sonar", snapshot(state))
 
     hit = answer(text, float(_params(load_state())["min_clearance_mm"]))
     power_action = None

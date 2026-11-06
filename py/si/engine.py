@@ -1109,6 +1109,104 @@ def _tie(state: dict, name: str, a: str, b: str) -> None:
         work["wires"].append({"name": name, "a": a, "b": b})
 
 
+def sonar_booster_task(text: str) -> bool:
+    words = re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
+    return "sonar" in words and any(word.startswith("boost") for word in words)
+
+
+def design_sonar_booster(state: dict, text: str) -> str:
+    """DC boost that feeds a sonar panel. Ping energy and the transducer match are not designed."""
+    low = text.lower()
+    volts = [float(v) for v in re.findall(r"(\d+(?:\.\d+)?)\s*v\b", low)]
+    amps = [float(a) for a in re.findall(r"(\d+(?:\.\d+)?)\s*a\b", low)]
+    vin = 12.0
+    vout = 48.0
+    if len(volts) >= 2:
+        vin, vout = volts[0], volts[1]
+    elif len(volts) == 1:
+        vout = volts[0]
+    iout = amps[0] if amps else 1.5
+    if vin <= 0 or vout <= vin or iout <= 0 or vout > 120 or iout > 20:
+        return "Say a boost that steps up, for example 12 V to 48 V at 1.5 A. Output must be above the input and at most 120 V."
+    freq = 200_000.0
+    khz = re.search(r"(\d+(?:\.\d+)?)\s*khz\b", low)
+    if khz:
+        freq = float(khz.group(1)) * 1000.0
+    eff = 0.90
+    duty = 1.0 - vin / vout
+    iin = iout * vout / (vin * eff)
+    ripple = 0.30 * iin
+    henry = vin * duty / (freq * ripple)
+    ipeak = iin + ripple / 2.0
+    vripple = vout * 0.01
+    farad = iout * duty / (freq * vripple)
+    cout_uf = max(farad * 1e6, 47.0)
+    switch_v = vout * 1.5
+    from py.si.desk import spacing_for, trace_ipc2221
+
+    power_trace = trace_ipc2221(iin, rise=10.0, oz=2.0, length_mm=40.0)
+    out_trace = trace_ipc2221(iout, rise=10.0, oz=2.0, length_mm=40.0)
+    gap = spacing_for(vout) or {"external": 0.2, "coated": 0.1}
+    vfb = 0.8
+    r_bottom = 10_000.0
+    r_top = r_bottom * (vout / vfb - 1.0)
+    parts = [
+        ("JB", "CONN", 12, 24),
+        ("CB1", "CAP", 28, 24),
+        ("LB", "IND", 46, 24),
+        ("QB", "FET", 64, 24),
+        ("DB", "DIODE", 82, 24),
+        ("CB2", "CAP", 100, 24),
+        ("UB", "BUCK", 64, 44),
+        ("RB1", "RES", 82, 44),
+        ("RB2", "RES", 100, 44),
+    ]
+    for ref, pkg, x, y in parts:
+        _put(state, ref, pkg, x, y)
+    lands = {"LB": "power-shielded", "QB": "DPAK", "DB": "SMC", "CB1": "1210", "CB2": "1210", "UB": "QFN-16"}
+    for row in _work(state)["footprints"]:
+        if row["ref"] in lands:
+            row["fp"] = lands[row["ref"]]
+    for name, a, b in (
+        ("VIN", "JB", "CB1"),
+        ("VIN", "CB1", "LB"),
+        ("SW", "LB", "QB"),
+        ("SW", "QB", "DB"),
+        ("VBOOST", "DB", "CB2"),
+        ("GND", "CB1", "QB"),
+        ("GND", "QB", "CB2"),
+        ("FB", "CB2", "RB1"),
+        ("FB", "RB1", "RB2"),
+        ("GND", "RB2", "UB"),
+    ):
+        _tie(state, name, a, b)
+    work = _work(state)
+    work["industry"] = "marine"
+    work["board"] = "power"
+    work["focus"] = "Sonar panel booster"
+    params = work.setdefault("params", {})
+    params["layers"] = 4
+    params["material"] = "FR4"
+    params["thickness_mm"] = 1.6
+    params["copper_oz"] = 2
+    pcb = state["pcb"]
+    pcb["outline"] = {"length": 120, "width": 70}
+    pcb["tracks"] = []
+    pcb["released"] = False
+    return (
+        f"Sonar panel booster. {vin:.0f} V in, {vout:.0f} V out, {iout:.2f} A continuous. "
+        f"Duty {duty:.2f}. Input current {iin:.2f} A at 90% efficiency. "
+        f"Inductor {henry * 1e6:.1f} uH at {freq / 1000:.0f} kHz, 30% ripple, peak {ipeak:.2f} A. "
+        f"Switch and diode rated {switch_v:.0f} V, switch current {ipeak:.2f} A, diode current {iout:.2f} A. "
+        f"Output capacitor at least {cout_uf:.0f} uF (the ripple formula gives {farad * 1e6:.0f} uF; 47 uF is the floor because that formula ignores ESR). "
+        f"Feedback {r_top / 1000:.1f} kohm over {r_bottom / 1000:.0f} kohm into 0.8 V. "
+        f"2 oz copper: input trace {power_trace['width_mm']:.2f} mm, output trace {out_trace['width_mm']:.2f} mm, 10 C rise. "
+        f"Coated clearance {gap['coated']:.2f} mm at {vout:.0f} V. "
+        "Placed JB, CB1, LB, QB, DB, CB2, UB, RB1, RB2 on a 120 x 70 mm, 4-layer marine board. "
+        "The acoustic ping, the transducer match, and the control-loop compensation are not designed."
+    )
+
+
 def design_bms(state: dict) -> str:
     """Place a BMS starter. Cell limits are not taken from a datasheet."""
     steps = (
