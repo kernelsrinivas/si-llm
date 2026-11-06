@@ -1,13 +1,14 @@
 {
-  "heldout_exact": 0.9663618549967342,
-  "heldout_bound": 0.9683213585891575,
+  "heldout_exact": 0.9872673849167483,
+  "heldout_bound": 0.9683317009467842,
   "epoch": 3,
-  "boards": 0.9752720079129574,
-  "train_rows": 37223,
-  "test_rows": 3062,
-  "params": 22273920,
-  "vocab": 3572,
+  "boards": 1.0,
+  "train_rows": 44603,
+  "test_rows": 3063,
+  "params": 22274688,
+  "vocab": 3573,
   "width": 384,
   "layers": 11,
-  "dropout": 0.15
+  "dropout": 0.15,
+  "ask": 1.0
 }
