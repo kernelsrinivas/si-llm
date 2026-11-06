@@ -1987,14 +1987,24 @@ def apply(state: dict, action: dict) -> str:
         pcb["released"] = False
         return f"Net {name} ties {a} to {b}."
     if op == "pcb_flow":
-        items = drc(state)
-        warns = [i for i in items if i["status"] == "warn"]
-        pcb["released"] = len(warns) == 0 and len(pcb["parts"]) > 0
-        files = "F.Cu, B.Cu, F.Mask, B.Mask, F.Silk, Edge.Cuts, Drill"
-        if pcb["released"]:
-            return f"Flow finished. DRC clean. Gerbers packed: {files}. BOM lines: {len(pcb['parts'])}."
-        why = warns[0]["detail"] if warns else "Add at least one part."
-        return f"Flow ran. Release held. {why}"
+        schematic = apply(state, {"op": "sch_erc"})
+        placed = f"{len(pcb['parts'])} parts" if pcb["parts"] else "layout empty"
+        lands = {row["ref"] for row in work.get("footprints") or []}
+        missing = [part["ref"] for part in pcb["parts"] if part["ref"] not in lands]
+        footprint = "footprints assigned" if pcb["parts"] and not missing else ("missing " + ", ".join(missing) if missing else "no footprints")
+        stages = [
+            "schematic: " + schematic,
+            "layout: " + placed,
+            "footprint: " + footprint,
+            "design check: " + apply(state, {"op": "pcb_drc"}),
+            "simulation: " + apply(state, {"op": "sim_dc"}),
+            "transient: " + apply(state, {"op": "sim_tran"}),
+            "3d: " + apply(state, {"op": "view_3d"}),
+            "fabrication: " + apply(state, {"op": "fab_stack"}),
+            "bom: " + apply(state, {"op": "asm_bom"}),
+            "assembly: " + apply(state, {"op": "asm_pos"}),
+        ]
+        return "PCB flow. " + " | ".join(stages)
     if op == "pcb_drc":
         items = drc(state)
         return "DRC: " + " ".join(f"{i['rule']} {i['status']}." for i in items)
