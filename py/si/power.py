@@ -1,0 +1,501 @@
+"""Power-electronics board taxonomy the harness reads.
+
+The model may emit a POWER command. This table is the meaning.
+Naming a board sets the power, BMS, or motor profile. It does not design the magnetics,
+the control loop, or a switching layout.
+"""
+
+from __future__ import annotations
+
+import re
+
+_LIMIT = "No magnetics design, no loop compensation, and no switching simulation are run."
+_PROFILE = {
+    "power": "Power profile: 4 layers, 2 oz copper, 12 mm gap.",
+    "bms": "BMS profile: 4 layers, 2 oz copper, 14 mm gap.",
+    "motor": "Motor profile: 4 layers, 2 oz copper, 12 mm gap.",
+}
+
+# id, family, board class, title, principle, aliases
+_RAW = [
+    ("acdc_linear", "acdc", "power", "Linear AC-DC supply", "A mains transformer and a linear regulator. Heavy, quiet, and inefficient.", "linear ac dc power supply", "linear power supply"),
+    ("acdc_transformer", "acdc", "power", "Transformer rectifier", "A mains transformer, a rectifier, and a bulk capacitor.", "transformer based rectifier", "transformer rectifier"),
+    ("acdc_bridge", "acdc", "power", "Bridge rectifier", "Four diodes into a bulk capacitor. No regulation by itself.", "bridge rectifier board", "bridge rectifier"),
+    ("acdc_halfwave", "acdc", "power", "Half-wave rectifier", "One diode conducts on alternate half-cycles. The ripple is large.", "half wave rectifier"),
+    ("acdc_fullwave", "acdc", "power", "Full-wave rectifier", "Both half-cycles charge the bulk capacitor.", "full wave rectifier"),
+    ("acdc_flyback", "acdc", "power", "Flyback converter", "Energy is stored in the coupled inductor, then released to the secondary.", "flyback converter", "flyback"),
+    ("acdc_forward", "acdc", "power", "Forward converter", "Energy is transferred while the switch is on. It needs a reset winding or clamp.", "forward converter"),
+    ("acdc_two_forward", "acdc", "power", "Two-switch forward", "Two switches clamp the transformer reset without a reset winding.", "two switch forward"),
+    ("acdc_pushpull", "acdc", "power", "Push-pull converter", "Two switches drive opposite primary halves. Flux balance matters.", "push pull converter"),
+    ("acdc_half", "acdc", "power", "Half-bridge converter", "Two switches and a capacitive divider drive the transformer.", "half bridge converter"),
+    ("acdc_full", "acdc", "power", "Full-bridge converter", "Four switches drive the primary. It is the usual high-power isolated stage.", "full bridge converter"),
+    ("acdc_llc", "acdc", "power", "LLC resonant converter", "A resonant tank switches near zero voltage. The tank is not calculated here.", "llc resonant", "llc converter"),
+    ("acdc_active_clamp", "acdc", "power", "Active-clamp flyback", "A clamp switch recycles leakage energy. Timing is not simulated.", "active clamp flyback"),
+    ("acdc_pfc", "acdc", "power", "Power-factor correction", "A boost stage forces the input current to follow the mains voltage.", "power factor correction", "pfc board"),
+    ("acdc_totem", "acdc", "power", "Totem-pole PFC", "A bridgeless totem-pole boost. GaN or SiC is typical. Losses are not modeled.", "totem pole pfc"),
+    ("acdc_adapter", "acdc", "power", "AC-DC adapter", "A sealed offline supply, usually flyback, with a low-voltage output.", "ac dc adapter"),
+    ("acdc_smps", "acdc", "power", "Industrial SMPS", "An enclosed offline supply for a cabinet. Safety spacing is the power profile, not a certification.", "industrial smps"),
+    ("acdc_medical", "acdc", "power", "Medical power supply", "Patient leakage is a creepage problem. This is not an IEC 60601 design.", "medical power supply"),
+    ("acdc_server", "acdc", "power", "Server power supply", "A high-power front-end, often PFC plus LLC. Hold-up is not calculated.", "server power supply"),
+    ("acdc_hvdc", "acdc", "power", "High-voltage DC supply", "A mains-derived high-voltage rail. Clearance follows the stated voltage, not a hipot test.", "high voltage dc supply"),
+    ("dcdc_buck", "dcdc", "power", "Buck converter", "A step-down switch, diode or synchronous FET, inductor, and output capacitor.", "buck converter", "step down converter"),
+    ("dcdc_boost", "dcdc", "power", "Boost converter", "A step-up switch, diode, inductor, and output capacitor.", "boost converter", "step up converter"),
+    ("dcdc_buckboost", "dcdc", "power", "Buck-boost converter", "The output can sit above or below the input. Polarity depends on the topology.", "buck boost converter"),
+    ("dcdc_inverting", "dcdc", "power", "Inverting buck-boost", "The output is negative relative to the input ground.", "inverting buck boost"),
+    ("dcdc_sepic", "dcdc", "power", "SEPIC converter", "Two inductors, or a coupled pair, and a series capacitor. Output stays positive.", "sepic converter", "sepic"),
+    ("dcdc_cuk", "dcdc", "power", "Cuk converter", "Energy moves through a series capacitor. The output is inverted.", "cuk converter", "cuk"),
+    ("dcdc_zeta", "dcdc", "power", "Zeta converter", "A cousin of SEPIC with a positive output.", "zeta converter", "zeta"),
+    ("dcdc_sync_buck", "dcdc", "power", "Synchronous buck", "A low-side FET replaces the diode. Dead time is not simulated.", "synchronous buck"),
+    ("dcdc_sync_boost", "dcdc", "power", "Synchronous boost", "A synchronous rectifier replaces the boost diode.", "synchronous boost"),
+    ("dcdc_multiphase", "dcdc", "power", "Multi-phase buck", "Several bucks share the current, phase-shifted. Current share is not simulated.", "multi phase buck", "multiphase buck"),
+    ("dcdc_interleaved", "dcdc", "power", "Interleaved boost", "Parallel boost phases cut the input ripple.", "interleaved boost"),
+    ("dcdc_isolated", "dcdc", "power", "Isolated DC-DC", "A transformer separates input and output grounds. Isolation is not hipot-tested.", "isolated dc dc"),
+    ("dcdc_flyback", "dcdc", "power", "Flyback DC-DC", "An isolated flyback from a DC rail rather than the mains.", "flyback dc dc"),
+    ("dcdc_forward", "dcdc", "power", "Forward DC-DC", "An isolated forward stage from a DC rail.", "forward dc dc"),
+    ("dcdc_pushpull", "dcdc", "power", "Push-pull DC-DC", "A center-tapped primary driven by two switches.", "push pull dc dc"),
+    ("dcdc_half", "dcdc", "power", "Half-bridge DC-DC", "A half-bridge primary on a DC rail.", "half bridge dc dc"),
+    ("dcdc_full", "dcdc", "power", "Full-bridge DC-DC", "A full-bridge primary on a DC rail.", "full bridge dc dc"),
+    ("dcdc_llc", "dcdc", "power", "LLC DC-DC", "A resonant isolated stage between two DC rails.", "llc dc dc"),
+    ("dcdc_resonant", "dcdc", "power", "Resonant DC-DC", "A resonant tank sets the gain. The tank values are not solved.", "resonant dc dc"),
+    ("dcdc_bidi", "dcdc", "power", "Bidirectional DC-DC", "Power can flow either way, as in a battery and a bus.", "bidirectional dc dc"),
+    ("dcdc_dab", "dcdc", "power", "Dual active bridge", "Two full bridges and a series inductor. Phase shift sets the power.", "dual active bridge"),
+    ("dcdc_fourswitch", "dcdc", "power", "Four-switch buck-boost", "Four switches buck, boost, or pass through without a polarity flip.", "four switch buck boost"),
+    ("dcdc_chargepump", "dcdc", "power", "Charge pump", "Capacitors, not an inductor, move the charge. Current is small.", "charge pump"),
+    ("dcdc_multi", "dcdc", "power", "Multi-output DC-DC", "One stage feeds several rails. Cross-regulation is not solved.", "multi output dc dc"),
+    ("dcdc_hv", "dcdc", "power", "High-voltage DC-DC", "A DC rail stepped up to a high voltage. Clearance is the stated profile, not a hipot result.", "high voltage dc dc"),
+    ("dcac_single", "dcac", "power", "Single-phase inverter", "An H-bridge makes one AC output from a DC bus.", "single phase inverter"),
+    ("dcac_three", "dcac", "power", "Three-phase inverter", "Three half-bridges make a three-phase output.", "three phase inverter"),
+    ("dcac_half", "dcac", "power", "Half-bridge inverter", "One phase leg and a split DC bus.", "half bridge inverter"),
+    ("dcac_full", "dcac", "power", "Full-bridge inverter", "Four switches make a single-phase output.", "full bridge inverter"),
+    ("dcac_pushpull", "dcac", "power", "Push-pull inverter", "A center-tapped primary makes AC. Flux balance matters.", "push pull inverter"),
+    ("dcac_sine", "dcac", "power", "Pure sine inverter", "The output is filtered toward a sine. THD is not measured.", "pure sine inverter", "sine wave inverter"),
+    ("dcac_modified", "dcac", "power", "Modified sine inverter", "A stepped square wave. It is not a sine.", "modified sine inverter"),
+    ("dcac_pwm", "dcac", "power", "PWM inverter", "Pulse-width modulation sets the average output.", "pwm inverter"),
+    ("dcac_spwm", "dcac", "power", "SPWM inverter", "The pulse width follows a sine reference.", "spwm inverter"),
+    ("dcac_svpwm", "dcac", "power", "SVPWM inverter", "Space-vector modulation for a three-phase bridge.", "svpwm inverter"),
+    ("dcac_multilevel", "dcac", "power", "Multilevel inverter", "Several voltage steps cut the harmonics. The stack is not drawn.", "multilevel inverter"),
+    ("dcac_npc", "dcac", "power", "NPC inverter", "A neutral-point-clamped multilevel leg. The clamp diodes are not placed.", "npc inverter"),
+    ("dcac_ttype", "dcac", "power", "T-type inverter", "A three-level leg with a bidirectional midpoint switch.", "t type inverter"),
+    ("dcac_chb", "dcac", "power", "Cascaded H-bridge", "Series H-bridges, each with its own DC source.", "cascaded h bridge"),
+    ("dcac_grid", "dcac", "power", "Grid-tied inverter", "It synchronizes to the grid. Anti-islanding is not implemented.", "grid tied inverter"),
+    ("dcac_offgrid", "dcac", "power", "Off-grid inverter", "It makes its own AC voltage. No grid relay is modeled.", "off grid inverter"),
+    ("dcac_hybrid", "dcac", "power", "Hybrid solar inverter", "PV, a battery, and an AC port on one controller. The power flow is not solved.", "hybrid solar inverter"),
+    ("dcac_hf", "dcac", "power", "High-frequency inverter", "A small transformer at a high switching frequency.", "high frequency inverter"),
+    ("dcac_lf", "dcac", "power", "Low-frequency inverter", "A large mains-frequency transformer.", "low frequency inverter"),
+    ("dcac_motor", "dcac", "motor", "Motor-drive inverter", "A three-phase bridge for a motor. The PWM and the motor model are not run.", "motor drive inverter"),
+    ("acac_controller", "acac", "power", "AC voltage controller", "Phase control of an AC waveform, often with a TRIAC.", "ac voltage controller"),
+    ("acac_regulator", "acac", "power", "AC voltage regulator", "It holds an AC output. The method is not chosen for you.", "ac voltage regulator"),
+    ("acac_single", "acac", "power", "Single-phase AC controller", "Phase control on one AC line.", "single phase ac controller"),
+    ("acac_three", "acac", "power", "Three-phase AC controller", "Phase control on three lines.", "three phase ac controller"),
+    ("acac_frequency", "acac", "power", "AC frequency converter", "AC in, a different frequency out. The DC link is not sized.", "ac frequency converter"),
+    ("acac_cyclo", "acac", "power", "Cycloconverter", "AC is synthesized directly from AC segments. No DC link.", "cycloconverter"),
+    ("acac_matrix", "acac", "power", "Matrix converter", "A grid of bidirectional switches. Commutation is not simulated.", "matrix converter"),
+    ("acac_sst", "acac", "power", "Solid-state transformer", "Power electronics replace a mains transformer. Isolation is not drawn.", "solid state transformer"),
+    ("acac_static", "acac", "power", "Static frequency converter", "A rectifier and an inverter make a new frequency.", "static frequency converter"),
+    ("acac_regulator_power", "acac", "power", "AC power regulator", "It limits AC power to a load. The control law is not implemented.", "ac power regulator"),
+    ("bms_1s", "bms", "bms", "Single-cell BMS", "One cell: protect charge and discharge current.", "single cell bms"),
+    ("bms_multi", "bms", "bms", "Multi-cell BMS", "Several series cells need a monitor and a balancer.", "battery management system", "battery management", "battery bms", "multi cell bms", "bms board", "bms"),
+    ("bms_4s", "bms", "bms", "2S-4S BMS", "A small series pack, typical of handheld tools.", "2s bms", "4s bms", "2s 4s bms"),
+    ("bms_16s", "bms", "bms", "5S-16S BMS", "A mid pack. Cell-tap voltage and balance current are not measured.", "16s bms", "5s bms"),
+    ("bms_32s", "bms", "bms", "17S-32S BMS", "A long series string. Isolation of the taps is not drawn.", "32s bms", "17s bms"),
+    ("bms_ev", "bms", "bms", "High-voltage EV BMS", "A traction pack monitor. It is not ISO 26262 work.", "ev bms", "high voltage ev bms"),
+    ("bms_protect", "bms", "bms", "Battery protection board", "Overcurrent, overvoltage, and undervoltage switches.", "battery protection board"),
+    ("bms_balance", "bms", "bms", "Cell balancing board", "It equalizes series cells. The balance current is not chosen.", "cell balancing board"),
+    ("bms_passive", "bms", "bms", "Passive balancing", "Bleed resistors dump the high cells. Heat is not modeled.", "passive balancing"),
+    ("bms_active", "bms", "bms", "Active balancing", "Charge is moved between cells. The transfer circuit is not drawn.", "active balancing"),
+    ("bms_monitor", "bms", "bms", "Battery monitor", "It measures cell voltages. The fuel-gauge algorithm is not run.", "battery monitoring board"),
+    ("bms_current", "bms", "bms", "Battery current sense", "A shunt or a Hall sensor. The shunt value is not chosen.", "battery current sensing"),
+    ("bms_temp", "bms", "bms", "Battery temperature monitor", "NTC taps on the pack. The thermal model is not run.", "battery temperature monitoring"),
+    ("bms_disconnect", "bms", "bms", "Battery disconnect", "A contactor or a FET opens the pack. Weld detection is not implemented.", "battery disconnect"),
+    ("bms_contactor", "bms", "bms", "Contactor control", "Coil drivers for the pack contactors. Economizer current is not set.", "battery contactor control", "contactor driver"),
+    ("bms_soc", "bms", "bms", "State-of-charge board", "SOC is an estimate. This product does not integrate coulomb counting.", "state of charge", "soc board"),
+    ("bms_soh", "bms", "bms", "State-of-health monitor", "SOH needs cycle history. None is stored here.", "state of health", "soh board"),
+    ("bms_pack", "bms", "bms", "Battery pack controller", "The pack brain: cells, current, contactors, and a host link.", "battery pack controller"),
+    ("bms_super", "bms", "bms", "Supercapacitor manager", "A series stack of supercapacitors. Balance is not sized.", "supercapacitor management"),
+    ("bms_gauge", "bms", "bms", "Fuel gauge", "A gauge IC estimates remaining charge. The model is not programmed.", "fuel gauge"),
+    ("chg_linear", "charge", "power", "Linear battery charger", "A linear pass element. Heat is the dropped voltage times the current.", "linear battery charger"),
+    ("chg_switch", "charge", "power", "Switching battery charger", "A switcher charges the pack. The charge loop is not compensated.", "switching battery charger"),
+    ("chg_cccv", "charge", "power", "CC-CV charger", "Constant current, then constant voltage. The knee is not simulated.", "cc cv charger"),
+    ("chg_liion", "charge", "power", "Li-ion charger", "A lithium-ion CC-CV profile. Cell limits must come from the cell datasheet.", "li ion charger", "lithium ion charger"),
+    ("chg_lifepo4", "charge", "power", "LiFePO4 charger", "A lower full-charge voltage than typical NMC. The voltage is not picked for you.", "lifepo4 charger"),
+    ("chg_lead", "charge", "power", "Lead-acid charger", "Bulk, absorb, and float. The voltages are not picked for you.", "lead acid charger"),
+    ("chg_nimh", "charge", "power", "NiMH charger", "Often minus-delta-V or a temperature cut. Neither is implemented.", "nimh charger"),
+    ("chg_multi", "charge", "power", "Multi-chemistry charger", "The chemistry has to be selected. This product does not detect it.", "multi chemistry charger"),
+    ("chg_usb", "charge", "power", "USB charging board", "A USB current source. Enumeration is not implemented.", "usb charging board"),
+    ("chg_usbc", "charge", "power", "USB-C Power Delivery", "A PD contract sets the voltage. The CC state machine is not run.", "usb c power delivery", "usbc power delivery", "usb pd"),
+    ("chg_program", "charge", "power", "Programmable charger", "Setpoints come from a host. No host protocol is implemented.", "programmable charger"),
+    ("chg_solar", "charge", "power", "Solar battery charger", "A PV panel feeds a battery. The panel model is not run.", "solar battery charger"),
+    ("chg_mppt", "charge", "power", "MPPT charger", "It tracks the panel maximum-power point. The tracker is not run.", "mppt charger", "mppt"),
+    ("chg_wireless", "charge", "power", "Wireless charging board", "An inductive charger. Coupling is not calculated.", "wireless charging board"),
+    ("chg_inductive", "charge", "power", "Inductive charging", "A coil pair transfers power. The coils are not designed.", "inductive charging"),
+    ("chg_obc", "charge", "power", "EV onboard charger", "An isolated AC-DC stage on the vehicle. It is not a traction inverter.", "onboard charger", "ev onboard charger"),
+    ("chg_offboard", "charge", "power", "EV offboard charger", "A ground charger. The connector handshake is not implemented.", "offboard charger"),
+    ("chg_fast", "charge", "power", "DC fast-charge module", "A high-power DC module. Cable current and cooling are not sized.", "dc fast charging", "fast charging power module"),
+    ("chg_bidi", "charge", "power", "Bidirectional charger", "The pack can take or give power. The direction logic is not run.", "bidirectional charger"),
+    ("chg_formation", "charge", "power", "Formation and test board", "Factory charge and discharge of new cells. It is not a cycler design.", "battery formation"),
+    ("mot_dc", "motor", "motor", "DC motor controller", "Voltage or current into a brushed motor. The motor constant is unknown.", "dc motor controller"),
+    ("mot_brushed", "motor", "motor", "Brushed DC driver", "An H-bridge or a single switch for a brushed motor.", "brushed dc motor", "brushed motor driver"),
+    ("mot_bldc", "motor", "motor", "BLDC controller", "A three-phase bridge for a brushless motor. Commutation is not run.", "bldc controller", "bldc motor"),
+    ("mot_pmsm", "motor", "motor", "PMSM controller", "A sinusoidal drive for a permanent-magnet synchronous motor.", "pmsm controller", "pmsm"),
+    ("mot_induction", "motor", "motor", "AC induction drive", "A VFD-style inverter for an induction motor. Slip is not estimated.", "induction motor drive", "ac induction"),
+    ("mot_three", "motor", "motor", "Three-phase motor driver", "Three half-bridges. Dead time and shoot-through are not checked.", "three phase motor driver"),
+    ("mot_stepper", "motor", "motor", "Stepper driver", "Two H-bridges for a stepper. Microstepping is not generated.", "stepper motor driver", "stepper driver"),
+    ("mot_servo", "motor", "motor", "Servo drive", "A position loop around a motor inverter. The encoder is not read.", "servo motor drive", "servo drive"),
+    ("mot_foc", "motor", "motor", "Field-oriented control", "Clarke and Park control. The transforms are not run.", "field oriented control", "foc board"),
+    ("mot_sixstep", "motor", "motor", "Six-step commutation", "Hall sensors pick one of six bridge states. The sequence is not generated.", "six step commutation"),
+    ("mot_vfd_power", "motor", "motor", "VFD power board", "The rectifier and inverter power stage of a drive.", "vfd power board"),
+    ("mot_vfd_control", "motor", "motor", "VFD control board", "The control card of a drive. Firmware is not generated.", "vfd control board"),
+    ("mot_regen", "motor", "motor", "Regenerative motor drive", "Braking energy returns to the bus. The brake chopper is not sized.", "regenerative motor drive"),
+    ("mot_dual", "motor", "motor", "Dual motor controller", "Two motors on one board. Current share between them is not solved.", "dual motor controller"),
+    ("mot_multi", "motor", "motor", "Multi-motor controller", "More than two motors. Each bridge is not drawn.", "multi motor controller"),
+    ("mot_linear", "motor", "motor", "Linear motor driver", "A linear motor is still a current drive. The magnet track is not modeled.", "linear motor driver"),
+    ("mot_solenoid", "motor", "motor", "Solenoid driver", "A switched coil with a freewheel diode. Pull-in current is not chosen.", "solenoid driver"),
+    ("mot_vcm", "motor", "motor", "Voice-coil driver", "A current source for a voice coil. The position loop is not run.", "voice coil"),
+    ("mot_steer", "motor", "motor", "Electric steering controller", "An assist motor driver. It is not an ISO 26262 steering design.", "electric steering"),
+    ("mot_traction", "motor", "motor", "Traction inverter", "The propulsion inverter. Torque, resolver, and functional safety are not implemented.", "traction motor inverter", "traction inverter"),
+    ("pfc_passive", "pfc", "power", "Passive PFC", "A choke shapes the current. The displacement factor is not calculated.", "passive pfc"),
+    ("pfc_active", "pfc", "power", "Active PFC", "A controlled boost follows the mains sine.", "active pfc"),
+    ("pfc_boost", "pfc", "power", "Boost PFC", "The common single-switch PFC boost.", "boost pfc"),
+    ("pfc_interleaved", "pfc", "power", "Interleaved PFC", "Two or more boost phases share the input current.", "interleaved pfc"),
+    ("pfc_bridgeless", "pfc", "power", "Bridgeless PFC", "The diode bridge is removed. Common-mode noise is not modeled.", "bridgeless pfc"),
+    ("pfc_totem", "pfc", "power", "Totem-pole PFC stage", "A totem-pole bridgeless boost. Device choice is not made.", "totem pole pfc stage"),
+    ("pfc_harmonic", "pfc", "power", "Harmonic filter", "An LC filter for line harmonics. The grid impedance is unknown.", "harmonic filter board"),
+    ("pfc_ahf", "pfc", "power", "Active harmonic filter", "A converter cancels harmonic current. The FFT is not run.", "active harmonic filter"),
+    ("pfc_phf", "pfc", "power", "Passive harmonic filter", "L and C traps. Tuning is not calculated.", "passive harmonic filter"),
+    ("pfc_reactive", "pfc", "power", "Reactive-power compensation", "It sources or sinks VARs. The grid study is not done.", "reactive power compensation"),
+    ("pfc_controller", "pfc", "power", "Power-factor controller", "A controller for a capacitor bank or a stage. Switching is not generated.", "power factor controller"),
+    ("pfc_svc", "pfc", "power", "Static VAR compensator", "Thyristor-switched reactors or capacitors. Firing is not generated.", "static var compensator"),
+    ("pfc_statcom", "pfc", "power", "STATCOM", "A voltage-source converter for VARs. The current loop is not run.", "statcom"),
+    ("pfc_apfc", "pfc", "power", "APFC capacitor-bank controller", "It switches PFC capacitors in steps. Step size is not chosen.", "apfc capacitor"),
+    ("pfc_three", "pfc", "power", "Three-phase PFC", "A three-phase rectifier plus active current shaping.", "three phase pfc"),
+    ("ups_offline", "ups", "power", "Offline UPS", "The load sits on the mains until a transfer. Transfer time is not specified.", "offline ups"),
+    ("ups_online", "ups", "power", "Online UPS", "The load always runs from the inverter. Efficiency is not calculated.", "online ups"),
+    ("ups_line", "ups", "power", "Line-interactive UPS", "A buck-boost on the line, then a transfer to battery.", "line interactive ups"),
+    ("ups_inverter", "ups", "power", "UPS inverter", "The battery-to-AC stage of a UPS.", "ups inverter"),
+    ("ups_rectifier", "ups", "power", "UPS rectifier", "The AC-to-DC front end of a UPS.", "ups rectifier"),
+    ("ups_charger", "ups", "power", "UPS charger", "The battery charger inside a UPS.", "ups charger"),
+    ("ups_bypass", "ups", "power", "UPS static bypass", "A thyristor or relay path around the inverter.", "ups static bypass"),
+    ("ups_pdu", "ups", "power", "UPS distribution", "The output distribution of a UPS. Branch protection is not specified.", "ups power distribution"),
+    ("ups_dc", "ups", "power", "DC UPS", "A battery on a DC bus, no AC inverter.", "dc ups"),
+    ("ups_redundant", "ups", "power", "Redundant power supply", "Two supplies share or back each other up. OR-ing is not drawn.", "redundant power supply"),
+    ("ups_ats", "ups", "power", "Automatic transfer switch", "It picks one of two AC sources. Break-before-make is not timed.", "automatic transfer switch", "ats board"),
+    ("ups_sts", "ups", "power", "Static transfer switch", "A solid-state transfer between AC sources.", "static transfer switch"),
+    ("ups_emergency", "ups", "power", "Emergency power controller", "It starts a backup source. The start sequence is not a life-safety design.", "emergency power controller"),
+    ("ups_generator", "ups", "power", "Generator synchronization", "It matches a generator to a bus. The sync check is not implemented.", "generator synchronization"),
+    ("ups_backup", "ups", "power", "Battery backup controller", "It decides when the battery supports the load.", "battery backup controller"),
+    ("sol_charge", "solar", "power", "Solar charge controller", "PV into a battery, PWM or MPPT. The algorithm is not run.", "solar charge controller"),
+    ("sol_mppt", "solar", "power", "MPPT controller", "A tracker on a solar input. The hill-climb is not run.", "mppt controller"),
+    ("sol_pwm", "solar", "power", "PWM solar controller", "A switched connection from panel to battery. It is not MPPT.", "pwm solar controller"),
+    ("sol_dcdc", "solar", "power", "Solar DC-DC", "A converter between a panel and a DC bus.", "solar dc dc"),
+    ("sol_inverter", "solar", "power", "Solar inverter", "PV DC to AC. Anti-islanding is not implemented.", "solar inverter"),
+    ("sol_grid", "solar", "power", "Grid-tied solar inverter", "It feeds the grid. Grid codes are not checked.", "grid tied solar inverter"),
+    ("sol_off", "solar", "power", "Off-grid solar inverter", "It makes a local AC voltage from PV and a battery.", "off grid solar inverter"),
+    ("sol_hybrid", "solar", "power", "Hybrid solar controller", "PV, battery, and AC on one board. Power flow is not solved.", "hybrid solar controller"),
+    ("sol_micro", "solar", "power", "Microinverter", "One inverter per module. The module I-V curve is not used.", "microinverter"),
+    ("sol_string", "solar", "power", "String inverter power board", "The power stage of a string inverter.", "string inverter"),
+    ("sol_wind_rect", "solar", "power", "Wind-turbine rectifier", "A generator rectifier. The turbine curve is not used.", "wind turbine rectifier"),
+    ("sol_wind", "solar", "power", "Wind-turbine converter", "Rectifier plus inverter for a turbine.", "wind turbine converter"),
+    ("sol_grid_if", "solar", "power", "Renewable grid interface", "The point where a renewable source meets the grid.", "renewable energy grid interface"),
+    ("sol_microgrid", "solar", "power", "Microgrid controller", "It coordinates sources. Dispatch is not solved.", "microgrid controller"),
+    ("sol_storage", "solar", "power", "Energy-storage converter", "A converter in front of a storage bank.", "energy storage converter"),
+    ("sol_bess", "solar", "power", "BESS power board", "The power stage of a battery energy-storage system.", "battery energy storage", "bess"),
+    ("sol_fuel", "solar", "power", "Fuel-cell DC-DC", "A fuel-cell stack is a soft source. The stack model is not used.", "fuel cell dc dc"),
+    ("sol_h2", "solar", "power", "Electrolyzer supply", "A current source for an electrolyzer. Gas safety is not designed.", "electrolyzer power"),
+    ("sol_regen", "solar", "power", "Regenerative energy recovery", "It captures energy that would have been burned. The source is not modeled.", "regenerative energy recovery"),
+    ("sol_bidi_grid", "solar", "power", "Bidirectional grid converter", "Power flows to or from the grid. Anti-islanding is not implemented.", "bidirectional grid converter"),
+    ("dist_pdu", "dist", "power", "Power distribution unit", "It splits a feed into branches. Branch ratings are not assigned.", "power distribution unit", "pdu"),
+    ("dist_dc", "dist", "power", "DC distribution", "A fused DC bus. Fuse values are not chosen.", "dc power distribution"),
+    ("dist_ac", "dist", "power", "AC distribution", "A fused AC bus. Breaker coordination is not done.", "ac power distribution"),
+    ("dist_pmu", "dist", "power", "Power management unit", "It supervises rails. The sequence is not generated.", "power management unit", "pmu"),
+    ("dist_sequence", "dist", "power", "Power sequencing board", "Rails come up in order. The order is not stored.", "power sequencing board"),
+    ("dist_mux", "dist", "power", "Power multiplexer", "One of several sources feeds a load.", "power multiplexer"),
+    ("dist_load", "dist", "power", "Load switch", "A FET switches a rail. Inrush is not limited unless you ask.", "load switch board"),
+    ("dist_hotswap", "dist", "power", "Hot-swap controller", "It limits inrush onto a live backplane. The SOA is not checked.", "hot swap controller"),
+    ("dist_efuse", "dist", "power", "Electronic fuse", "A FET opens on overcurrent. The trip point is not set.", "electronic fuse"),
+    ("dist_smart", "dist", "power", "Smart power switch", "A protected high-side switch. The current limit is not set.", "smart power switch"),
+    ("dist_ideal", "dist", "power", "Ideal-diode controller", "A FET mimics a diode with less drop. Reverse current is not simulated.", "ideal diode"),
+    ("dist_or", "dist", "power", "Power OR-ing", "Two sources share a load through ideal diodes.", "power oring", "power or ing"),
+    ("dist_redundant", "dist", "power", "Redundant power controller", "It manages two feeds. Failover time is not specified.", "redundant power controller"),
+    ("dist_multirail", "dist", "power", "Multi-rail supply", "Several rails from one board. Cross-regulation is not solved.", "multi rail power"),
+    ("dist_monitor", "dist", "power", "Power monitor", "Voltage and current telemetry. The ADC is not read.", "power monitoring board"),
+    ("dist_meter", "dist", "power", "Power meter", "It accumulates energy. No calibration is stored.", "power metering"),
+    ("dist_dcbus", "dist", "power", "DC bus controller", "It supervises a DC bus voltage. The bus is not sized.", "dc bus controller"),
+    ("dist_acbus", "dist", "power", "AC bus controller", "It supervises an AC bus. Synchronization is not run.", "ac bus controller"),
+    ("dist_sequencer", "dist", "power", "Power-rail sequencer", "A chip that orders rail enable pins.", "power rail sequencer"),
+    ("dist_fail", "dist", "power", "Power-failure protection", "It warns or holds up when the input falls. Hold-up time is not calculated.", "power failure protection"),
+    ("gate_mosfet", "gate", "power", "MOSFET gate driver", "It charges a MOSFET gate. The gate charge is not taken from a datasheet.", "mosfet gate driver"),
+    ("gate_igbt", "gate", "power", "IGBT gate driver", "An IGBT needs a firm positive and negative gate drive. The rails are not chosen.", "igbt gate driver"),
+    ("gate_sic", "gate", "power", "SiC MOSFET gate driver", "SiC often wants a negative off voltage. The rails are not chosen.", "sic mosfet gate driver", "sic gate driver"),
+    ("gate_gan", "gate", "power", "GaN FET gate driver", "GaN gates are sensitive. The driver is not matched to a device.", "gan fet gate driver", "gan gate driver"),
+    ("gate_half", "gate", "power", "Half-bridge gate driver", "High side and low side with dead time. Dead time is not set.", "half bridge gate driver"),
+    ("gate_full", "gate", "power", "Full-bridge gate driver", "Four gate channels. Shoot-through is not checked.", "full bridge gate driver"),
+    ("gate_three", "gate", "power", "Three-phase gate driver", "Six channels for a motor bridge.", "three phase gate driver"),
+    ("gate_isolated", "gate", "power", "Isolated gate driver", "A barrier between logic and the switch. The barrier is not a certification.", "isolated gate driver"),
+    ("gate_high", "gate", "power", "High-side gate driver", "A bootstrap or an isolated supply for a high-side switch. Bootstrap is not sized.", "high side gate driver"),
+    ("gate_low", "gate", "power", "Low-side gate driver", "A ground-referenced gate driver.", "low side gate driver"),
+    ("gate_dual", "gate", "power", "Dual-channel gate driver", "Two channels. Dead time is not set.", "dual channel gate driver"),
+    ("gate_ipm", "gate", "power", "Intelligent power module driver", "The logic side of a module. The module pinout waits for a datasheet.", "intelligent power module"),
+    ("gate_desat", "gate", "power", "Desaturation protection", "It turns the switch off if Vce rises. The blanking time is not set.", "desaturation protection"),
+    ("gate_miller", "gate", "power", "Active Miller clamp", "A clamp fights Miller turn-on. The clamp FET is not chosen.", "miller clamp"),
+    ("gate_supply", "gate", "power", "Gate-driver supply", "The isolated rails for a driver. The transformer is not designed.", "gate driver power supply"),
+    ("gate_dead", "gate", "power", "Dead-time controller", "It inserts a gap between high side and low side. The gap is not chosen.", "dead time controller"),
+    ("gate_soft", "gate", "power", "Soft-switching driver", "Timing aimed at zero-voltage switching. The resonance is not solved.", "soft switching driver"),
+    ("gate_interface", "gate", "power", "Power-module interface", "Connectors and protection between a controller and a module.", "power module interface"),
+    ("ind_smps", "industrial", "power", "Industrial SMPS board", "A cabinet supply. The enclosure and the safety file are not produced.", "industrial smps board"),
+    ("ind_plc", "industrial", "power", "PLC power supply", "The 24 V supply for a PLC rack. It is not a PLC I/O design.", "plc power supply"),
+    ("ind_dcdc", "industrial", "power", "Industrial DC-DC", "A wide-input isolated brick. The input range is not chosen.", "industrial dc dc"),
+    ("ind_ac_motor", "industrial", "motor", "Industrial AC motor drive", "A cabinet drive power stage.", "ac motor drive"),
+    ("ind_servo", "industrial", "motor", "Industrial servo drive", "A servo power stage. The motion profile is not generated.", "industrial servo"),
+    ("ind_soft", "industrial", "motor", "Soft starter", "Thyristors ramp an induction motor. The ramp is not generated.", "soft starter"),
+    ("ind_ssr", "industrial", "power", "Solid-state relay", "A semiconductor switch for AC or DC. Heat in the package is not modeled.", "solid state relay"),
+    ("ind_thyristor", "industrial", "power", "Thyristor power controller", "Phase control of a heater or a similar load.", "thyristor power controller"),
+    ("ind_scr", "industrial", "power", "SCR rectifier", "A controlled rectifier. Firing angle is not generated.", "scr rectifier"),
+    ("ind_heat", "industrial", "power", "Induction heating", "A resonant inverter into a work coil. The coil is not designed.", "induction heating"),
+    ("ind_weld", "industrial", "power", "Welding inverter", "A current source for an arc. The weld process is not controlled.", "welding inverter"),
+    ("ind_plasma", "industrial", "power", "Plasma cutting supply", "A high-voltage start and a current source. The torch is not designed.", "plasma cutting"),
+    ("ind_plate", "industrial", "power", "Electroplating supply", "A low-voltage high-current source. The chemistry is not specified.", "electroplating power"),
+    ("ind_heater", "industrial", "power", "Industrial heater controller", "It switches or phases a heater. The thermal plant is not modeled.", "industrial heater"),
+    ("ind_starter", "industrial", "motor", "Induction-motor starter", "A starter, not a VFD. The overload is not sized.", "induction motor starter"),
+    ("ind_elevator", "industrial", "motor", "Elevator drive", "A hoist drive. It is not a safety-rated lift design.", "elevator drive"),
+    ("ind_cnc", "industrial", "motor", "CNC spindle drive", "A spindle inverter. The cutting load is not modeled.", "cnc spindle"),
+    ("ind_brake", "industrial", "motor", "Brake chopper", "A switch and a resistor dump DC-bus energy. The resistor is not sized.", "brake chopper"),
+    ("ind_crane", "industrial", "motor", "Crane drive", "A hoist or travel drive. The duty cycle is not known.", "crane drive"),
+    ("ind_regen", "industrial", "power", "Regenerative industrial supply", "A drive that returns energy to the line.", "regenerative industrial"),
+    ("ev_traction", "ev", "motor", "EV traction inverter", "The propulsion stage. Functional safety and the motor map are not included.", "ev traction inverter"),
+    ("ev_mcu", "ev", "motor", "Motor control unit", "The vehicle motor controller. Firmware is not generated.", "motor control unit"),
+    ("ev_obc", "ev", "power", "Onboard charger board", "The vehicle AC charger power stage.", "onboard charger board"),
+    ("ev_dcdc", "ev", "power", "EV DC-DC converter", "Usually the high-voltage to 12 V converter. The rails are not sized.", "ev dc dc"),
+    ("ev_bms", "ev", "bms", "EV battery management", "The traction-pack BMS. Cell data is not stored.", "ev battery management"),
+    ("ev_bdu", "ev", "bms", "Battery disconnect unit", "Contactors between the pack and the inverter.", "battery disconnect unit"),
+    ("ev_hvjb", "ev", "power", "High-voltage junction box", "Fuses and contactors on the HV bus. Clearance is not a vehicle homologation.", "high voltage junction box"),
+    ("ev_lv", "ev", "power", "Low-voltage distribution", "The 12 V body distribution. Loads are not assigned.", "low voltage power distribution"),
+    ("ev_ac_chg", "ev", "power", "AC charging controller", "The control side of AC charging. The pilot signal is not generated.", "ac charging controller"),
+    ("ev_dc_chg", "ev", "power", "DC fast-charge controller", "The control side of DC charging. The protocol is not implemented.", "dc fast charging controller"),
+    ("ev_regen", "ev", "motor", "Regenerative braking controller", "It blends friction and motor braking. The blend is not a brake design.", "regenerative braking controller"),
+    ("ev_compressor", "ev", "motor", "Electric compressor driver", "An inverter for an AC compressor.", "electric compressor"),
+    ("ev_steer", "ev", "motor", "Electric power-steering driver", "The assist-motor power stage. It is not a steering-safety case.", "electric power steering"),
+    ("ev_pump", "ev", "motor", "Electric water-pump controller", "A small motor drive for a pump.", "electric water pump"),
+    ("ev_fan", "ev", "motor", "Electric cooling-fan controller", "A motor drive for a radiator fan.", "electric cooling fan"),
+    ("ev_hv_lv", "ev", "power", "HV-to-LV converter", "The isolated converter from the traction bus to the low-voltage bus.", "hv to lv"),
+    ("ev_precharge", "ev", "power", "Pre-charge controller", "A resistor charges the inverter capacitors before the main contactor. The time constant is not set.", "pre charge controller", "precharge"),
+    ("ev_contactor", "ev", "bms", "EV contactor driver", "Coil drivers for the HV contactors.", "ev contactor driver"),
+    ("ev_v2g", "ev", "power", "Vehicle-to-grid converter", "The vehicle exports power. Grid codes are not checked.", "vehicle to grid"),
+    ("ev_v2l", "ev", "power", "Vehicle-to-load converter", "The vehicle makes a local AC outlet. The outlet protection is not designed.", "vehicle to load"),
+    ("prot_ov", "protect", "power", "Overvoltage protection", "A clamp or a cutoff above a rail limit. The threshold is not set.", "overvoltage protection"),
+    ("prot_uv", "protect", "power", "Undervoltage protection", "It flags or opens when a rail sags. The threshold is not set.", "undervoltage protection"),
+    ("prot_oc", "protect", "power", "Overcurrent protection", "A sense and a switch. The trip point is not set.", "overcurrent protection"),
+    ("prot_short", "protect", "power", "Short-circuit protection", "Fast opening on a short. The let-through energy is not calculated.", "short circuit protection"),
+    ("prot_reverse", "protect", "power", "Reverse-polarity protection", "A diode or an ideal diode. The drop is not chosen.", "reverse polarity protection"),
+    ("prot_temp", "protect", "power", "Overtemperature protection", "A sensor opens the stage. The sensor placement is not thermal-simulated.", "overtemperature protection"),
+    ("prot_surge", "protect", "power", "Surge protection", "A MOV or a TVS at an input. The surge waveform is not applied.", "surge protection"),
+    ("prot_tvs", "protect", "power", "Transient voltage suppression", "A clamp on a transient. The clamp voltage is not chosen.", "transient voltage suppression"),
+    ("prot_arc", "protect", "power", "Arc-fault detection", "It looks for an arc signature. No detector algorithm is run.", "arc fault detection"),
+    ("prot_gf", "protect", "power", "Ground-fault detection", "It compares outgoing and return current. The threshold is not a code limit.", "ground fault detection"),
+    ("prot_el", "protect", "power", "Earth-leakage protection", "A residual-current trip. It is not a certified RCD.", "earth leakage"),
+    ("prot_rcm", "protect", "power", "Residual-current monitor", "It reports leakage without necessarily tripping.", "residual current"),
+    ("prot_ins", "protect", "power", "Insulation monitoring", "It measures isolation to chassis. The injection circuit is not drawn.", "insulation monitoring"),
+    ("prot_iso", "protect", "power", "Isolation monitoring", "The same job on a floating HV bus. It is not a vehicle insulation monitor.", "isolation monitoring"),
+    ("prot_overchg", "protect", "bms", "Overcharge protection", "It stops charge above a cell limit. The limit comes from the cell datasheet.", "battery overcharge"),
+    ("prot_overdis", "protect", "bms", "Over-discharge protection", "It stops discharge below a cell limit.", "battery over discharge", "over discharge"),
+    ("prot_runaway", "protect", "bms", "Thermal-runaway detection", "Gas, temperature, or voltage signs. No sensor fusion is run.", "thermal runaway"),
+    ("prot_inrush", "protect", "power", "Inrush limiter", "An NTC or a FET soft start. The inrush energy is not calculated.", "inrush current limiter"),
+    ("prot_estop", "protect", "power", "Emergency power cutoff", "A hard open of the source. It is not a safety-relay architecture.", "emergency power cutoff"),
+    ("prot_fault", "protect", "power", "Power-fault monitor", "It reports faults. It does not diagnose a field return.", "power fault monitoring"),
+    ("led_cc", "led", "power", "Constant-current LED driver", "It regulates LED current. The string voltage is unknown.", "constant current led driver"),
+    ("led_cv", "led", "power", "Constant-voltage LED driver", "A voltage source for an LED strip that has its own resistors.", "constant voltage led driver"),
+    ("led_high", "led", "power", "High-power LED driver", "A high-current LED stage. The heatsink is not sized.", "high power led driver"),
+    ("led_ac", "led", "power", "AC LED driver", "Mains to an LED current. It is an offline supply.", "ac led driver"),
+    ("led_dc", "led", "power", "DC LED driver", "A DC input LED current source.", "dc led driver"),
+    ("led_dim", "led", "power", "Dimmable LED driver", "A dim input, analog or PWM. The curve is not defined.", "dimmable led driver"),
+    ("led_pwm", "led", "power", "PWM LED controller", "It chops the LED current. Flicker is not evaluated.", "pwm led controller"),
+    ("led_rgb", "led", "power", "RGB LED controller", "Three current channels. The color mix is not calibrated.", "rgb led power"),
+    ("led_rgbw", "led", "power", "RGBW LED driver", "Four channels, including white.", "rgbw led"),
+    ("led_cob", "led", "power", "COB LED driver", "A high-power chip-on-board current source.", "cob led"),
+    ("led_street", "led", "power", "Street-light driver", "An outdoor constant-current driver. Surge and the optics are not designed.", "street light driver"),
+    ("led_auto", "led", "power", "Automotive LED driver", "A vehicle lighting current source. It is not an automotive qualification.", "automotive led driver"),
+    ("led_back", "led", "power", "Backlight LED driver", "A display backlight current source.", "backlight led"),
+    ("led_grow", "led", "power", "Grow-light power board", "A horticulture current source. The spectrum is not chosen.", "grow light"),
+    ("led_emergency", "led", "power", "Emergency-lighting supply", "A battery path for a lamp. It is not a life-safety certification.", "emergency lighting"),
+    ("wpt_tx", "wireless", "power", "Wireless power transmitter", "A driven coil. The coil and the foreign-object check are not designed.", "wireless power transmitter"),
+    ("wpt_rx", "wireless", "power", "Wireless power receiver", "A pickup coil and a rectifier. Coupling is unknown.", "wireless power receiver"),
+    ("wpt_ipt", "wireless", "power", "Inductive power transfer", "Loosely coupled coils. The mutual inductance is not calculated.", "inductive power transfer"),
+    ("wpt_resonant", "wireless", "power", "Resonant inductive converter", "Resonance raises the coupling. The k factor is unknown.", "resonant inductive"),
+    ("wpt_qi", "wireless", "power", "Qi charging controller", "A Qi transmitter or receiver controller. The Qi state machine is not run.", "qi charging"),
+    ("wpt_multi", "wireless", "power", "Multi-coil wireless charger", "Several coils selected by switches. Selection is not implemented.", "multi coil wireless"),
+    ("wpt_high", "wireless", "power", "High-power wireless charger", "A high-power inductive charger. The thermal path is not modeled.", "high power wireless"),
+    ("wpt_ev", "wireless", "power", "Wireless EV charging", "A vehicle pad and a ground pad. Alignment and safety are not designed.", "wireless ev charging"),
+    ("wpt_dynamic", "wireless", "power", "Dynamic wireless EV charging", "Charging while moving. The road coils are not designed.", "dynamic wireless"),
+    ("wpt_control", "wireless", "power", "Wireless power control", "The control card of a wireless stage.", "wireless power control"),
+    ("hv_supply", "hv", "power", "High-voltage DC board", "A high-voltage DC source. Creepage is the profile gap, not a hipot pass.", "high voltage dc board"),
+    ("hv_pulse", "hv", "power", "High-voltage pulse generator", "Short high-voltage pulses. The pulse energy is not set.", "high voltage pulse"),
+    ("hv_marx", "hv", "power", "Marx generator control", "A staged impulse generator. The stages are not drawn.", "marx generator"),
+    ("hv_discharge", "hv", "power", "Capacitor discharge", "A switch dumps a capacitor into a load. The energy is not set.", "capacitor discharge"),
+    ("hv_rect", "hv", "power", "High-voltage rectifier", "Diodes on a high-voltage AC source.", "high voltage rectifier"),
+    ("hv_mult", "hv", "power", "High-voltage multiplier", "A capacitor-diode multiplier. The drop under load is not solved.", "high voltage multiplier"),
+    ("hv_cw", "hv", "power", "Cockcroft-Walton converter", "A specific multiplier stack. Stage count is not chosen.", "cockcroft walton"),
+    ("hv_electrostatic", "hv", "power", "Electrostatic supply", "A very low current at high voltage.", "electrostatic power"),
+    ("hv_switch", "hv", "power", "High-voltage switching board", "Switches on a high-voltage rail. The device voltage is not chosen.", "high voltage switching"),
+    ("hv_pulsed", "hv", "power", "Pulsed-power controller", "It times a pulsed energy dump. The pulse is not generated.", "pulsed power"),
+    ("hv_thyristor", "hv", "power", "High-power thyristor controller", "A large SCR stack. Snubbers are not sized.", "high power thyristor"),
+    ("hv_mosfet", "hv", "power", "High-power MOSFET switch", "A paralleled MOSFET switch. Current share is not solved.", "high power mosfet switching"),
+    ("hv_igbt", "hv", "power", "High-power IGBT converter", "An IGBT power stage. Switching loss is not calculated.", "high power igbt"),
+    ("hv_sic", "hv", "power", "SiC power module board", "A SiC module on a power board. The module pinout waits for a datasheet.", "sic power module"),
+    ("hv_gan", "hv", "power", "GaN power module board", "A GaN module. Layout inductance is not extracted.", "gan power module"),
+    ("rob_pdu", "robot", "power", "Robot power distribution", "A fused robot bus. Branch currents are not assigned.", "robot power distribution"),
+    ("rob_bms", "robot", "bms", "Robot battery management", "A pack monitor for a robot. The cell type is unknown.", "robot battery management"),
+    ("rob_multi", "robot", "motor", "Multi-motor power controller", "Several motor bridges from one robot bus.", "multi motor power"),
+    ("rob_servo", "robot", "motor", "Servo power distribution", "Power to several servos. The stall current is unknown.", "servo power distribution"),
+    ("rob_bldc", "robot", "motor", "BLDC power board", "The power stage of a robot BLDC axis.", "bldc motor power"),
+    ("rob_high", "robot", "motor", "High-current motor driver", "A high-current bridge. The copper is the motor profile, not a measured temperature.", "high current motor driver"),
+    ("rob_dc", "robot", "motor", "Robot DC motor driver", "A brushed bridge for a robot joint.", "robot dc motor"),
+    ("rob_step", "robot", "motor", "Stepper power driver", "A stepper power stage for a robot axis.", "stepper motor power"),
+    ("rob_embedded", "robot", "power", "Embedded computer supply", "Rails for a computer on the robot. The rails are not sequenced.", "embedded computer power"),
+    ("rob_pi", "robot", "power", "Raspberry Pi power", "A 5 V feed for a Pi. It is not a Pi HAT design.", "raspberry pi power"),
+    ("rob_jetson", "robot", "power", "Jetson power", "A higher-current 5 V or module rail. The module current is not taken from a datasheet.", "jetson power"),
+    ("rob_sensor", "robot", "power", "Sensor power distribution", "Clean rails for sensors. The filter is not designed.", "sensor power distribution"),
+    ("rob_seq", "robot", "power", "Robot power sequencer", "It orders robot rails. The order is not stored.", "robot power sequencing"),
+    ("rob_hot", "robot", "power", "Robot hot-swap", "A battery can be swapped. The inrush limit is not set.", "robot hot swap"),
+    ("rob_dock", "robot", "power", "Robot charging dock", "A dock contact and a charger. The contact resistance is unknown.", "robot charging dock"),
+    ("rob_auto", "robot", "power", "Autonomous robot power", "A supervisor for a mobile robot bus.", "autonomous robot power"),
+    ("rob_humanoid", "robot", "power", "Humanoid power distribution", "Many actuators on one bus. The actuator count is not placed.", "humanoid robot power"),
+    ("rob_actuator", "robot", "motor", "Actuator power driver", "The power stage of one actuator.", "actuator power"),
+    ("rob_redundant", "robot", "power", "Redundant robot supply", "Two feeds. Failover is not timed.", "redundant robotics power"),
+    ("rob_regen", "robot", "motor", "Robot regenerative braking", "Joint energy returned to the bus. The bus clamp is not sized.", "regenerative braking power"),
+    ("aero_dcdc", "aero", "power", "Aerospace DC-DC", "A wide-temperature isolated converter. It is not a flight qualification.", "aerospace dc dc"),
+    ("aero_pcu", "aero", "power", "Satellite power conditioning", "The satellite PCU. Solar-array and battery control are not implemented.", "satellite power conditioning", "power conditioning unit"),
+    ("aero_pdu", "aero", "power", "Spacecraft distribution", "A spacecraft PDU. Fault protection is not a flight design.", "spacecraft power distribution"),
+    ("aero_avionics", "aero", "power", "Avionics power supply", "Rails for avionics. It is not DO-160 or DO-254 work.", "avionics power"),
+    ("aero_aircraft", "aero", "power", "Aircraft power converter", "A converter on an aircraft bus, often 28 V or 270 V. The bus is not specified.", "aircraft power converter"),
+    ("aero_telecom_rect", "aero", "power", "Telecom rectifier", "A mains-to-minus-48 V rectifier. The plant is not sized.", "telecom rectifier"),
+    ("aero_48v", "aero", "power", "Telecom -48 V supply", "The classic telecom DC plant voltage. The plant controller is not implemented.", "telecom 48v", "48v power"),
+    ("aero_telecom_dist", "aero", "power", "Telecom DC distribution", "Fuses on a -48 V bus.", "telecom dc distribution"),
+    ("aero_server", "aero", "power", "Server PSU board", "A server front-end. It is the same class as a server supply, not a rack design.", "server psu"),
+    ("aero_hotswap", "aero", "power", "Hot-swap server power", "A server module that plugs into a live bus.", "hot swap server"),
+    ("aero_redundant", "aero", "power", "Redundant server PSU", "N+1 server supplies. Current share is not solved.", "redundant server"),
+    ("aero_bus", "aero", "power", "Data-center bus converter", "An isolated bus converter, often 48 V to 12 V.", "data center bus converter", "bus converter"),
+    ("aero_shelf", "aero", "power", "Power-shelf controller", "The controller of a power shelf. The shelf protocol is not implemented.", "power shelf"),
+    ("aero_rack", "aero", "power", "Rack power distribution", "The rack PDU. Branch metering is not calibrated.", "rack power distribution"),
+    ("aero_gpu", "aero", "power", "GPU server power module", "A high-current module for a GPU board. The GPU rail is not a PDN extraction.", "gpu server power"),
+    ("aero_density", "aero", "power", "High-density DC-DC", "A small high-frequency converter. The layout inductance is not extracted.", "high density dc dc"),
+    ("aero_bbu", "aero", "power", "Battery backup unit", "A short-ride-through battery in a rack.", "battery backup unit"),
+    ("aero_super", "aero", "power", "Supercapacitor backup", "Supercapacitors hold a rail through a short gap. Hold-up is not calculated.", "supercapacitor backup"),
+    ("aero_liquid", "aero", "power", "Liquid-cooled power module", "A cold plate is assumed. The flow and the thermal resistance are not modeled.", "liquid cooled power"),
+    ("aero_efficient", "aero", "power", "High-efficiency conversion board", "A high-efficiency stage. Efficiency is not measured.", "high efficiency power"),
+    ("dev_si", "device", "power", "Si MOSFET", "A silicon MOSFET switch. Rds(on) and gate charge wait for a datasheet.", "si mosfet", "silicon mosfet"),
+    ("dev_igbt", "device", "power", "IGBT", "An IGBT for higher power and lower frequency than a MOSFET.", "igbt"),
+    ("dev_sic", "device", "power", "SiC MOSFET", "A silicon-carbide MOSFET for high voltage and high efficiency. Losses are not modeled.", "sic mosfet"),
+    ("dev_gan", "device", "power", "GaN FET", "A gallium-nitride FET for high frequency. Layout inductance is not extracted.", "gan fet"),
+    ("dev_scr", "device", "power", "SCR thyristor", "A latching controlled rectifier. It stays on until the current falls.", "scr", "thyristor"),
+    ("dev_triac", "device", "power", "TRIAC", "A bidirectional thyristor for AC control.", "triac"),
+    ("dev_superjunction", "device", "power", "Superjunction MOSFET", "A high-voltage silicon MOSFET structure. Coss is not modeled.", "superjunction mosfet"),
+    ("dev_digital", "device", "power", "Digital power controller", "A digital loop. The compensator is not coded.", "digital power controller"),
+    ("dev_dsp", "device", "power", "DSP power controller", "A DSP running a power or motor loop. No firmware is generated.", "dsp power controller"),
+    ("dev_fpga", "device", "power", "FPGA power controller", "An FPGA timing a converter. No HDL is generated.", "fpga power controller"),
+    ("dev_current_mode", "device", "power", "Current-mode controller", "The inner loop is current. Slope compensation is not set.", "current mode controller"),
+    ("dev_voltage_mode", "device", "power", "Voltage-mode controller", "The loop compares output voltage to a ramp.", "voltage mode controller"),
+    ("dev_resonant", "device", "power", "Resonant controller", "A controller for an LLC or a similar tank. The tank is not solved.", "resonant controller"),
+    ("dev_phaseshift", "device", "power", "Phase-shift controller", "Phase shift between bridge legs sets the power of a full bridge.", "phase shift controller"),
+]
+
+
+class Board:
+    def __init__(self, id, family, board, title, principle, *aliases):
+        self.id = id
+        self.family = family
+        self.board = board
+        self.title = title
+        self.principle = principle
+        self.aliases = aliases
+
+
+ROWS = [Board(*row) for row in _RAW]
+_BY_ID = {row.id: row for row in ROWS}
+_ALIASES = sorted(((alias, row) for row in ROWS for alias in row.aliases), key=lambda item: len(item[0]), reverse=True)
+_ASK = re.compile(r"\b(what|explain|define|meaning|difference|which)\b")
+_DRAW = re.compile(r"\b(how|design|build)\b")
+_LIST = re.compile(r"\b(list|taxonomy|categories|category)\b")
+_CELL = re.compile(r"\b(cell|nand|nor)\b")
+_PLACE = re.compile(r"\b(place|move|mount|put|add)\b")
+_REF = re.compile(r"\b(?:tp|sw|[rcdlqjuy])\d+\b")
+
+
+def tokens() -> list[str]:
+    words = set()
+    for row in ROWS:
+        words.add(row.id)
+        words.add(row.family)
+        for alias in row.aliases:
+            words.update(alias.split())
+    return sorted(words)
+
+
+def families() -> str:
+    seen = []
+    for row in ROWS:
+        if row.family not in seen:
+            seen.append(row.family)
+    names = {
+        "acdc": "AC-DC",
+        "dcdc": "DC-DC",
+        "dcac": "DC-AC",
+        "acac": "AC-AC",
+        "bms": "BMS",
+        "charge": "Charging",
+        "motor": "Motor drives",
+        "pfc": "PFC and harmonics",
+        "ups": "UPS",
+        "solar": "Solar and renewable",
+        "dist": "Distribution",
+        "gate": "Gate drivers",
+        "industrial": "Industrial",
+        "ev": "EV",
+        "protect": "Protection",
+        "led": "LED",
+        "wireless": "Wireless power",
+        "hv": "High voltage",
+        "robot": "Robotics power",
+        "aero": "Aerospace and telecom",
+        "device": "Devices and controllers",
+    }
+    return "Power electronics families: " + ", ".join(names[key] for key in seen) + f". {len(ROWS)} boards. {_LIMIT}"
+
+
+def find(text: str) -> Board | None:
+    low = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    padded = f" {low} "
+    if _CELL.search(low) and "inverter" in low:
+        return None
+    if _PLACE.search(low) and _REF.search(low) and len(re.findall(r"\b\d+\b", low)) >= 2:
+        return None
+    for alias, row in _ALIASES:
+        if f" {alias} " in padded:
+            return row
+    return None
+
+
+def _span(text: str, row: Board) -> int:
+    low = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    padded = f" {low} "
+    return max((len(alias) for alias in row.aliases if f" {alias} " in padded), default=0)
+
+
+def lookup(text: str) -> dict | None:
+    low = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    if _LIST.search(low) and "power" in low.split():
+        return {"mode": "ask", "id": "", "text": families(), "span": 0}
+    row = find(text)
+    if row is None:
+        return None
+    text_out = f"{row.title}. {row.principle} {_PROFILE[row.board]} {_LIMIT}"
+    draw = bool(_DRAW.search(low) and (row.family == "bms" or row.id == "acdc_bridge"))
+    span = _span(text, row)
+    if _ASK.search(low) and not draw:
+        return {"mode": "ask", "id": row.id, "text": text_out, "draw": False, "span": span}
+    return {"mode": "set", "id": row.id, "text": text_out + " Board class stored.", "draw": draw, "span": span}
+
+
+def describe(kind: str) -> tuple[str, str] | None:
+    row = _BY_ID.get(kind)
+    if row is None:
+        return None
+    return row.board, f"{row.title}. {row.principle} {_PROFILE[row.board]} {_LIMIT} Board class stored."

@@ -4,6 +4,7 @@ const BASE = "http://127.0.0.1:8765";
 
 type Part = { ref: string; pkg: string; x: number; y: number };
 type Net = { name: string; a: string; b: string };
+type Track = { name: string; a: string; b: string; width: number; points: number[][] };
 type Drc = { rule: string; status: string; detail: string };
 type Cad = {
   length: number | null;
@@ -13,7 +14,7 @@ type Cad = {
   fillet: number;
 };
 export type Snapshot = {
-  pcb: { parts: Part[]; nets: Net[]; released: boolean };
+  pcb: { parts: Part[]; nets: Net[]; tracks: Track[]; released: boolean };
   cad: Cad;
   drc: Drc[];
   mass: { cm3: number; grams: number } | null;
@@ -33,7 +34,17 @@ export type Snapshot = {
     outline: number[];
     datasheets: { ref: string; mpn: string; package: string; pins: number; pitch: number; body: string; land: string; nets: string }[];
     signal: string;
+    desk: string;
+    focus: string;
     ipcClass: string;
+    cell: {
+      name: string;
+      note: string;
+      width: number;
+      height: number;
+      devices: { name: string; type: string; w: number; l: number; g: string }[];
+      shapes: { kind: string; x: number; y: number; w: number; h: number }[];
+    } | null;
     ipc: { name: string; status: string; detail: string }[];
   };
 };
@@ -76,6 +87,28 @@ function numOrNull(v: unknown) {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+function cellOf(raw: unknown) {
+  if (!raw || typeof raw !== "object") return null;
+  const bag = raw as { name?: unknown; note?: unknown; width?: unknown; height?: unknown; devices?: unknown; shapes?: unknown };
+  if (!str(bag.name)) return null;
+  const devices = Array.isArray(bag.devices) ? bag.devices : [];
+  const shapes = Array.isArray(bag.shapes) ? bag.shapes : [];
+  return {
+    name: str(bag.name),
+    note: str(bag.note),
+    width: num(bag.width),
+    height: num(bag.height),
+    devices: devices.map((row) => {
+      const item = row as { name?: unknown; type?: unknown; w?: unknown; l?: unknown; g?: unknown };
+      return { name: str(item.name), type: str(item.type), w: num(item.w), l: num(item.l), g: str(item.g) };
+    }),
+    shapes: shapes.map((row) => {
+      const item = row as { kind?: unknown; x?: unknown; y?: unknown; w?: unknown; h?: unknown };
+      return { kind: str(item.kind), x: num(item.x), y: num(item.y), w: num(item.w), h: num(item.h) };
+    }),
+  };
+}
+
 function linksOf(raw: unknown): McpLink[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -116,12 +149,16 @@ function snapshotOf(raw: unknown): Snapshot {
       outline?: unknown;
       datasheets?: unknown;
       signal?: unknown;
+      desk?: unknown;
+      focus?: unknown;
       ipc_class?: unknown;
+      cell?: unknown;
       ipc?: unknown;
     };
   };
   const parts = Array.isArray(bag.pcb?.parts) ? bag.pcb.parts : [];
   const nets = Array.isArray(bag.pcb?.nets) ? bag.pcb.nets : [];
+  const tracks = Array.isArray(bag.pcb?.tracks) ? bag.pcb.tracks : [];
   const drc = Array.isArray(bag.drc) ? bag.drc : [];
   return {
     pcb: {
@@ -133,6 +170,20 @@ function snapshotOf(raw: unknown): Snapshot {
       nets: nets.map((n) => {
         const row = n as Net;
         return { name: str(row.name), a: str(row.a), b: str(row.b) };
+      }),
+      tracks: tracks.map((row) => {
+        const track = row as { name?: unknown; a?: unknown; b?: unknown; width?: unknown; points?: unknown };
+        const points = Array.isArray(track.points) ? track.points : [];
+        return {
+          name: str(track.name),
+          a: str(track.a),
+          b: str(track.b),
+          width: num(track.width),
+          points: points.map((point) => {
+            const pair = point as number[];
+            return [num(pair?.[0]), num(pair?.[1])];
+          }),
+        };
       }),
     },
     cad: {
@@ -205,7 +256,10 @@ function snapshotOf(raw: unknown): Snapshot {
           })
         : [],
       signal: str(bag.work?.signal),
+      desk: str(bag.work?.desk),
+      focus: str(bag.work?.focus),
       ipcClass: str(bag.work?.ipc_class),
+      cell: cellOf(bag.work?.cell),
       ipc: Array.isArray(bag.work?.ipc)
         ? bag.work.ipc.map((row) => {
             const item = row as { name?: unknown; status?: unknown; detail?: unknown };

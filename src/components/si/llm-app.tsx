@@ -35,6 +35,7 @@ const PROMPTS = [
   "Marine industry",
   "Robot industry",
   "Medical industry",
+  "List PCB fields",
   "Tiny circuit",
   "Power electronics",
   "BMS board",
@@ -50,6 +51,21 @@ const PROMPTS = [
   "DFM check",
   "IPC check",
   "Set IPC class 3",
+  "Trace width for 3 A",
+  "Design rules",
+  "Autoroute the board",
+  "High speed switching circuit",
+  "PLC circuit",
+  "PAC circuit",
+  "MCU board design",
+  "Inverter from transistors",
+  "NAND cell from transistors",
+  "0402 clearance",
+  "Flex board",
+  "BGA package",
+  "Fab rules",
+  "IPC-2221 at 50 V",
+  "Feature audit",
 ];
 
 export function LlmApp() {
@@ -416,6 +432,7 @@ export function LlmApp() {
           <Flow snap={snap} />
           <Sheets snap={snap} />
           <Board snap={snap} />
+          <Cell snap={snap} />
           <Solid snap={snap} />
           <section className="rounded-lg border border-line bg-surface p-3">
             <p className="font-mono text-xs tracking-wide text-copper uppercase">CLI</p>
@@ -482,8 +499,11 @@ function Flow({ snap }: { snap: Snapshot | null }) {
     ["Design check", snap?.drc.length ? snap.drc.map((item) => `${item.rule} ${item.status}`).join(", ") : "Empty"],
     ["Fabrication", work?.fab || work?.stack || "Empty"],
     ["Signal", work?.signal || "Empty"],
+    ["Desk", work?.desk || "Empty"],
     ["IPC", work?.ipc.length ? `Class ${work.ipcClass || "2"} · ${work.ipc.filter((item) => item.status === "pass").length}/${work.ipc.length}` : "Not run"],
     ["Assembly", work?.assembly || "Empty"],
+    ["Cell", work?.cell?.name ? work.cell.name : "Empty"],
+    ["Focus", work?.focus || "None"],
   ];
   return (
     <section className="rounded-lg border border-line bg-surface p-3">
@@ -534,6 +554,38 @@ function Sheets({ snap }: { snap: Snapshot | null }) {
   );
 }
 
+function Cell({ snap }: { snap: Snapshot | null }) {
+  const cell = snap?.work.cell;
+  if (!cell) return null;
+  const fill: Record<string, string> = { ndiff: "#3d7ea6", pdiff: "#c45c6a", poly: "#e08a45", metal: "#d7dde2", contact: "#1a1008" };
+  const scale = 8;
+  return (
+    <section className="rounded-lg border border-line bg-surface p-3">
+      <p className="font-mono text-xs tracking-wide text-copper uppercase">Transistor cell</p>
+      <svg viewBox={`0 0 ${cell.width * scale} ${cell.height * scale}`} className="mt-2 h-36 w-full rounded-md bg-bg">
+        {cell.shapes.map((shape, index) => (
+          <rect
+            key={shape.kind + index}
+            x={shape.x * scale}
+            y={(cell.height - shape.y - shape.h) * scale}
+            width={shape.w * scale}
+            height={shape.h * scale}
+            fill={fill[shape.kind] || "#8d9aa4"}
+          />
+        ))}
+      </svg>
+      <ul className="mt-2 flex flex-col gap-1">
+        {cell.devices.map((device) => (
+          <li key={device.name} className="text-xs text-muted">
+            <span className="font-mono text-fg">{device.name}</span> {device.type} {device.w}/{device.l} gate {device.g}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-xs text-muted">{cell.note}</p>
+    </section>
+  );
+}
+
 function Board({ snap }: { snap: Snapshot | null }) {
   const parts = snap?.pcb.parts ?? [];
   const nets = snap?.pcb.nets ?? [];
@@ -543,6 +595,11 @@ function Board({ snap }: { snap: Snapshot | null }) {
       <svg viewBox="0 0 100 72" className="mt-2 h-36 w-full rounded-md bg-bg">
         <rect x="4" y="4" width="92" height="64" rx="2" fill="#14110e" stroke="#e08a45" strokeWidth="0.6" />
         {nets.map((net) => {
+          const track = snap?.pcb.tracks.find((row) => row.name === net.name && row.a === net.a && row.b === net.b);
+          if (track && track.points.length > 1) {
+            const d = track.points.map((point) => `${6 + point[0]},${8 + point[1] * 0.7}`).join(" ");
+            return <polyline key={net.name + net.a + net.b} points={d} fill="none" stroke="#e08a45" strokeWidth="0.8" />;
+          }
           const a = parts.find((p) => p.ref === net.a);
           const b = parts.find((p) => p.ref === net.b);
           if (!a || !b) return null;
