@@ -1,7 +1,6 @@
 // Preferred platform: macOS (Apple Silicon first, Intel as a second slice).
-// On a Mac: open native/xcode/si.xcodeproj and run the si scheme,
-// or run native/xcode/macos.sh.
-// The Linux g++ build is only a compile check of this same file.
+// Install once on a Mac: sh native/xcode/create-build-run.sh
+// Then call the native binary directly: si --help
 
 #include <algorithm>
 #include <cctype>
@@ -388,7 +387,7 @@ void help() {
             << "si mcp list\n"
             << "si mcp remove <name>\n"
             << "si --mode <auto|semi|man> --yes \"place a resistor r1 at 10 12\"\n"
-            << "Build on a Mac with native/xcode/macos.sh. Apple Silicon is the preferred slice.\n";
+            << "Install once on a Mac with native/xcode/create-build-run.sh, then call si directly.\n";
 }
 
 bool gated(const std::string &mode, const std::string &tool, const std::string &key, const std::vector<std::string> &always) {
