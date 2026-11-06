@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
-cd /workspace
+if [ -d /workspace ]; then
+  cd /workspace
+else
+  cd "$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+fi
 node scripts/preview.mjs stop || true
 if ! curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8766/health; then
   python3 -m py.si.tool_server pcb >>/tmp/si-pcb.log 2>&1 &
