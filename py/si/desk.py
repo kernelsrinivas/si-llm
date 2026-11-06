@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import csv
 import math
+import os
 from pathlib import Path
 
-OUT = Path("/workspace/model/out")
+OUT = Path(os.environ.get("SI_MODEL") or Path(__file__).resolve().parents[2] / "model") / "out"
 
 # IPC-2221B Table 6-1 bands, upper voltage then B1, B2, B4 in mm.
 # Open-calculator figures. Not a licensed copy. Not creepage. B3 is not stored.

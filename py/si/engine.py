@@ -1564,9 +1564,7 @@ def apply(state: dict, action: dict) -> str:
             return "The datasheet did not contain a package list."
         return build_datasheet(state, variants)
     if op == "datasheet_rebuild":
-        from pathlib import Path
-
-        sheet = Path("/workspace/model/datasheet.txt")
+        sheet = ROOT / "datasheet.txt"
         if not sheet.exists() or not sheet.read_text().strip():
             return "Upload a datasheet first. PDF or text."
         from py.si.datasheet import parse

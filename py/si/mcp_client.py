@@ -615,11 +615,9 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
 
 
 def datasheet_turn(text: str, mode: str | None = None) -> dict:
-    from pathlib import Path
-
     from py.si.datasheet import parse
 
-    sheet = Path("/workspace/model/datasheet.txt")
+    sheet = ROOT / "datasheet.txt"
     clean = text.strip()
     if not clean:
         return pack("The datasheet was empty.", [], "datasheet", "build_datasheet", snapshot(load_state()))
