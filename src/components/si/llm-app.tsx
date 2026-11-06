@@ -429,6 +429,7 @@ export function LlmApp() {
         </div>
 
         <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto border-t border-line p-3 lg:border-t-0 lg:border-l">
+          <Views snap={snap} />
           <Flow snap={snap} />
           <Sheets snap={snap} />
           <Board snap={snap} />
@@ -471,6 +472,38 @@ async function fileToBase64(file: File) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
   return btoa(binary);
+}
+
+function Views({ snap }: { snap: Snapshot | null }) {
+  const rows = snap?.work.bom ?? [];
+  return (
+    <section className="rounded-lg border border-line bg-surface p-3">
+      <p className="font-mono text-xs tracking-wide text-copper uppercase">BOM</p>
+      {!rows.length && <p className="mt-2 text-xs text-muted">Ask for the BOM after parts are placed. Lines group by role, value, and footprint.</p>}
+      {!!rows.length && (
+        <table className="mt-2 w-full text-left text-xs">
+          <thead className="font-mono text-[10px] text-faint">
+            <tr>
+              <th className="py-1 pr-2">Qty</th>
+              <th className="py-1 pr-2">Role</th>
+              <th className="py-1 pr-2">Value</th>
+              <th className="py-1">Refs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.role + row.value + row.refs} className="border-t border-line text-muted">
+                <td className="py-1 pr-2 font-mono text-fg">{row.qty}</td>
+                <td className="py-1 pr-2">{row.role}</td>
+                <td className="py-1 pr-2">{row.value || row.footprint || row.pkg}</td>
+                <td className="py-1">{row.refs}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
 }
 
 function Flow({ snap }: { snap: Snapshot | null }) {

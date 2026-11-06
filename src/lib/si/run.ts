@@ -20,6 +20,8 @@ export type Snapshot = {
   mass: { cm3: number; grams: number } | null;
   work: {
     symbols: { ref: string; pkg: string }[];
+    wires: { name: string; a: string; b: string }[];
+    bom: { pkg: string; footprint: string; role: string; value: string; refs: string; qty: number }[];
     footprints: { ref: string; fp: string }[];
     sim: string;
     view3d: string;
@@ -135,6 +137,8 @@ function snapshotOf(raw: unknown): Snapshot {
     mass?: { cm3?: unknown; grams?: unknown } | null;
     work?: {
       symbols?: unknown;
+      wires?: unknown;
+      bom?: unknown;
       footprints?: unknown;
       sim?: unknown;
       view3d?: unknown;
@@ -206,6 +210,19 @@ function snapshotOf(raw: unknown): Snapshot {
         ? bag.work.symbols.map((row) => {
             const item = row as { ref?: unknown; pkg?: unknown };
             return { ref: str(item.ref), pkg: str(item.pkg) };
+          })
+        : [],
+      wires: Array.isArray(bag.work?.wires)
+        ? bag.work.wires.map((row) => {
+            const item = row as { name?: unknown; a?: unknown; b?: unknown };
+            return { name: str(item.name), a: str(item.a), b: str(item.b) };
+          })
+        : [],
+      bom: Array.isArray(bag.work?.bom)
+        ? bag.work.bom.map((row) => {
+            const item = row as { pkg?: unknown; footprint?: unknown; role?: unknown; value?: unknown; refs?: unknown; qty?: unknown };
+            const refs = Array.isArray(item.refs) ? item.refs.map((ref) => str(ref)).filter(Boolean).join(", ") : str(item.refs);
+            return { pkg: str(item.pkg), footprint: str(item.footprint), role: str(item.role), value: str(item.value), refs, qty: num(item.qty) };
           })
         : [],
       footprints: Array.isArray(bag.work?.footprints)
