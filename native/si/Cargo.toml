@@ -1,0 +1,9 @@
+[package]
+name = "si"
+version = "1.0.0"
+edition = "2021"
+description = "Native SI-LLM client for macOS, Linux, and Windows"
+
+[[bin]]
+name = "si"
+path = "src/main.rs"
