@@ -48,11 +48,13 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build the preferred macOS binary
-        run: sh native/xcode/create-build-run.sh arm64 --help
+      - name: Install the native si command
+        run: sh native/xcode/create-build-run.sh arm64
+      - name: Run the installed command directly
+        run: si --help
       - uses: actions/upload-artifact@v4
         with:
           name: si-macos-arm64
-          path: native/xcode/build/Build/Products/Release/si
+          path: /usr/local/bin/si
 
 
