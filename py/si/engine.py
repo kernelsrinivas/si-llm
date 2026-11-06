@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from pathlib import Path
 
-ROOT = Path("/workspace/model")
+ROOT = Path(os.environ.get("SI_MODEL") or Path(__file__).resolve().parents[2] / "model")
 SESSION = ROOT / "session.json"
 
 PKG_ALIAS = {
