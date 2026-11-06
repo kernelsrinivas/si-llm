@@ -76,7 +76,12 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 self._send(400, {"ok": False, "error": "empty"})
                 return
-            self._send(200, designer_turn(text[:500]))
+            approved = bool(body.get("approved"))
+            mode = str(body.get("mode") or "").strip() or None
+            if mode and mode not in {"auto", "semi", "man"}:
+                self._send(400, {"ok": False, "error": "Mode is auto, semi, or man."})
+                return
+            self._send(200, designer_turn(text[:500], approved=approved, mode=mode))
             return
         if path == "/datasheet":
             raw_pdf = str(body.get("pdf") or "")
