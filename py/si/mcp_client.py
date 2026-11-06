@@ -509,7 +509,7 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
 
     state = load_state()
     pending = (_work(state).get("ask") or {}).get("task") == "sonar-booster"
-    ratings = bool(re.search(r"\d+(?:\.\d+)?\s*(?:v|a|khz|%)\b", text.lower()))
+    ratings = bool(re.search(r"\d+(?:\.\d+)?\s*(?:v|a|khz|%)\b", text.lower())) or bool(re.search(r"\b(?:use )?(?:the )?suggestions?\b", text.lower()))
     if sonar_booster_task(text) or (pending and ratings):
         prior = (_work(state).get("ask") or {}).get("text") or ""
         combined = f"{prior} {text}".strip() if pending and not sonar_booster_task(text) else text.strip()
@@ -518,7 +518,7 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
         needed = sonar_ratings(combined)
         if isinstance(needed, list):
             _work(state)["ask"] = {"task": "sonar-booster", "text": combined}
-            report = "I will not design the sonar panel booster until you give the missing ratings.\n" + "\n".join(f"- {line}" for line in needed)
+            report = "I will not design the sonar panel booster until you answer. Pick a suggestion or type your own value.\n" + "\n".join(needed)
             remember(state, text.strip(), report, ["ask"])
             save_state(state)
             return pack(report, ["ask"], "power", "ask_spec", snapshot(state))
@@ -607,7 +607,14 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
         runtime = "pytorch-client"
     if action and action.get("op") == "ask_spec":
         state = load_state()
-        reply = "I need the ratings before I design this. What is the input voltage, the output voltage, the continuous current, the switching frequency, and the efficiency?"
+        reply = (
+            "I need the ratings before I design this. Pick a suggestion or type your own value.\n"
+            "What is the input voltage?\n  suggestions: 12 V, 24 V\n  custom: type your own value\n"
+            "What is the output voltage?\n  suggestions: 48 V, 60 V\n  custom: type your own value\n"
+            "What is the continuous output current?\n  suggestions: 1 A, 1.5 A, 2 A\n  custom: type your own value\n"
+            "What switching frequency should the booster use?\n  suggestions: 100 kHz, 200 kHz, 500 kHz\n  custom: type your own value\n"
+            "What efficiency should I use to calculate the input current?\n  suggestions: 85%, 90%, 95%\n  custom: type your own value"
+        )
         remember(state, text.strip(), reply, ["ask"])
         save_state(state)
         return pack(reply, ["ask"], runtime, "ask_spec", snapshot(state))
