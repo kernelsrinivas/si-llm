@@ -110,7 +110,7 @@ BOARDS = ["tiny", "power", "bms", "motor", "cpu", "gpu", "modem", "motherboard"]
 SPECIAL = ["<pad>", "<bos>", "<eos>", "<sep>", "<unk>", "<none>"]
 
 BLOCK = 28
-N_EMBD = 384
+N_EMBD = 768
 N_HEAD = 8
 N_LAYER = 11
 DROP = 0.15
@@ -161,16 +161,16 @@ def build_vocab() -> list[str]:
 
 
 class Block(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, n_embd: int = N_EMBD, n_head: int = N_HEAD) -> None:
         super().__init__()
-        self.ln1 = nn.LayerNorm(N_EMBD)
-        self.qkv = nn.Linear(N_EMBD, 3 * N_EMBD)
-        self.proj = nn.Linear(N_EMBD, N_EMBD)
-        self.ln2 = nn.LayerNorm(N_EMBD)
-        self.fc1 = nn.Linear(N_EMBD, 4 * N_EMBD)
-        self.fc2 = nn.Linear(4 * N_EMBD, N_EMBD)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.qkv = nn.Linear(n_embd, 3 * n_embd)
+        self.proj = nn.Linear(n_embd, n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+        self.fc1 = nn.Linear(n_embd, 4 * n_embd)
+        self.fc2 = nn.Linear(4 * n_embd, n_embd)
         self.drop = nn.Dropout(DROP)
-        self.n_head = N_HEAD
+        self.n_head = n_head
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b, t, c = x.shape
@@ -194,13 +194,13 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, n_vocab: int) -> None:
+    def __init__(self, n_vocab: int, n_embd: int = N_EMBD, n_layer: int = N_LAYER, n_head: int = N_HEAD) -> None:
         super().__init__()
-        self.tok = nn.Embedding(n_vocab, N_EMBD)
-        self.pos = nn.Embedding(BLOCK, N_EMBD)
-        self.blocks = nn.ModuleList(Block() for _ in range(N_LAYER))
-        self.ln_f = nn.LayerNorm(N_EMBD)
-        self.head = nn.Linear(N_EMBD, n_vocab, bias=False)
+        self.tok = nn.Embedding(n_vocab, n_embd)
+        self.pos = nn.Embedding(BLOCK, n_embd)
+        self.blocks = nn.ModuleList(Block(n_embd, n_head) for _ in range(n_layer))
+        self.ln_f = nn.LayerNorm(n_embd)
+        self.head = nn.Linear(n_embd, n_vocab, bias=False)
 
     def forward(self, idx: torch.Tensor) -> torch.Tensor:
         b, t = idx.shape
@@ -1412,6 +1412,49 @@ def load():
     return model, vocab, stoi_of(vocab), meta
 
 
+def grow_width(old: GPT, model: GPT) -> None:
+    """Copy a narrower trained network into the leading subspace and leave the new dimensions at zero."""
+    old_w = old.tok.weight.size(1)
+    new_w = model.tok.weight.size(1)
+    if old_w == new_w and len(old.blocks) == len(model.blocks):
+        model.pos.load_state_dict(old.pos.state_dict())
+        model.blocks.load_state_dict(old.blocks.state_dict())
+        model.ln_f.load_state_dict(old.ln_f.state_dict())
+        return
+    with torch.no_grad():
+        model.tok.weight.zero_()
+        model.pos.weight.zero_()
+        model.head.weight.zero_()
+        model.pos.weight[:, :old_w].copy_(old.pos.weight[:, :old_w])
+        model.ln_f.weight.fill_(1)
+        model.ln_f.bias.zero_()
+        model.ln_f.weight[:old_w].copy_(old.ln_f.weight[:old_w])
+        model.ln_f.bias[:old_w].copy_(old.ln_f.bias[:old_w])
+        for old_block, new_block in zip(old.blocks, model.blocks):
+            for old_ln, new_ln in ((old_block.ln1, new_block.ln1), (old_block.ln2, new_block.ln2)):
+                new_ln.weight.fill_(1)
+                new_ln.bias.zero_()
+                new_ln.weight[:old_w].copy_(old_ln.weight[:old_w])
+                new_ln.bias[:old_w].copy_(old_ln.bias[:old_w])
+            new_block.qkv.weight.zero_()
+            new_block.qkv.bias.zero_()
+            for part in range(3):
+                new_block.qkv.weight[part * new_w : part * new_w + old_w, :old_w].copy_(old_block.qkv.weight[part * old_w : (part + 1) * old_w, :old_w])
+                new_block.qkv.bias[part * new_w : part * new_w + old_w].copy_(old_block.qkv.bias[part * old_w : (part + 1) * old_w])
+            new_block.proj.weight.zero_()
+            new_block.proj.bias.zero_()
+            new_block.proj.weight[:old_w, :old_w].copy_(old_block.proj.weight[:old_w, :old_w])
+            new_block.proj.bias[:old_w].copy_(old_block.proj.bias[:old_w])
+            new_block.fc1.weight.zero_()
+            new_block.fc1.bias.zero_()
+            new_block.fc1.weight[: 4 * old_w, :old_w].copy_(old_block.fc1.weight[: 4 * old_w, :old_w])
+            new_block.fc1.bias[: 4 * old_w].copy_(old_block.fc1.bias[: 4 * old_w])
+            new_block.fc2.weight.zero_()
+            new_block.fc2.bias.zero_()
+            new_block.fc2.weight[:old_w, : 4 * old_w].copy_(old_block.fc2.weight[:old_w, : 4 * old_w])
+            new_block.fc2.bias[:old_w].copy_(old_block.fc2.bias[:old_w])
+
+
 def finetune() -> dict:
     """Add the ASK intent to the saved checkpoint without throwing away the trained weights."""
     rng = random.Random(7)
@@ -1419,20 +1462,21 @@ def finetune() -> dict:
     stoi = stoi_of(vocab)
     blob = torch.load(WEIGHTS, map_location="cpu", weights_only=False)
     old_vocab = list(blob["vocab"])
-    old = GPT(len(old_vocab))
+    old_width = int(blob["model"]["tok.weight"].shape[1])
+    old_layers = len({key.split(".")[1] for key in blob["model"] if key.startswith("blocks.") and key.endswith("ln1.weight")})
+    old = GPT(len(old_vocab), n_embd=old_width, n_layer=old_layers, n_head=8)
     old.load_state_dict(blob["model"])
     model = GPT(len(vocab))
     with torch.no_grad():
+        grow_width(old, model)
+        kept = min(old_width, model.tok.weight.size(1))
         old_at = {tok: i for i, tok in enumerate(old_vocab)}
         for i, tok in enumerate(vocab):
             j = old_at.get(tok)
             if j is None:
                 continue
-            model.tok.weight[i].copy_(old.tok.weight[j])
-            model.head.weight[i].copy_(old.head.weight[j])
-        model.pos.load_state_dict(old.pos.state_dict())
-        model.blocks.load_state_dict(old.blocks.state_dict())
-        model.ln_f.load_state_dict(old.ln_f.state_dict())
+            model.tok.weight[i, :kept].copy_(old.tok.weight[j, :kept])
+            model.head.weight[i, :kept].copy_(old.head.weight[j, :kept])
     rows = samples(rng)
     train_rows, test_rows = split_rows(rows, rng)
     ask_rows = [row for row in train_rows if row[1][0] == "ASK"]
@@ -1454,8 +1498,8 @@ def finetune() -> dict:
         model.train()
         total = 0.0
         seen = 0
-        for i in range(0, len(train_rows), 48):
-            chunk = train_rows[i : i + 48]
+        for i in range(0, len(train_rows), 16):
+            chunk = train_rows[i : i + 16]
             x, y = batchify(chunk, stoi, pad)
             logits = model(x.to(device))
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1).to(device), ignore_index=-100)
