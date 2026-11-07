@@ -144,7 +144,12 @@ Modes are `auto`, `semi`, and `man`.
 si mcp add pcb --url http://127.0.0.1:8766/mcp
 si mcp list
 si mode semi
+si agents
+si agent schematic "run the schematic stage"
+si crew "finish the board"
 ```
+
+`si agents` lists the specialists. `si agent <name>` runs one. `si crew` runs the ones the sentence names, in board order: schematic, layout, footprint, design check, simulation, 3D, fabrication, assembly. A sentence with no specialist name runs that whole crew. Power joins only when the sentence is about power. A read does not ask. A release or a design stops for the same approval gate, then the remaining agents continue.
 
 ## Native client
 

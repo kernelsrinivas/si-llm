@@ -6,7 +6,7 @@ import base64
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from py.si.datasheet import pdf_text
+from py.si.agents import roster, run_agent, run_crew
 from py.si.engine import load_state, snapshot
 from py.si.mcp_client import add_preset, add_server, current_mode, datasheet_turn, decide, designer_turn, pack, probe, remove_server, set_mode
 from py.si.net import META
@@ -62,6 +62,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/state":
             self._send(200, {"ok": True, "state": snapshot(load_state())})
             return
+        if path == "/agents":
+            self._send(200, {"ok": True, "agents": roster()})
+            return
         self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -110,6 +113,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/mode":
             self._send(200, set_mode(str(body.get("mode") or "")))
+            return
+        if path == "/agents":
+            self._send(200, {"ok": True, "agents": roster()})
+            return
+        if path in {"/agent", "/crew"}:
+            text = str(body.get("text") or "").strip()
+            approved = bool(body.get("approved"))
+            mode = str(body.get("mode") or "").strip() or None
+            if mode and mode not in {"auto", "semi", "man"}:
+                self._send(400, {"ok": False, "error": "Mode is auto, semi, or man."})
+                return
+            if path == "/agent":
+                self._send(200, run_agent(str(body.get("agent") or "").strip(), text[:500], approved=approved, mode=mode))
+                return
+            self._send(200, run_crew(text[:500], approved=approved, mode=mode, resume=bool(body.get("resume"))))
             return
         if path == "/mcp/add":
             if body.get("preset"):
