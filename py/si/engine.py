@@ -1673,6 +1673,51 @@ def chip_check(state: dict, kind: str) -> str:
     return _note(work, kind, "warn", "Unknown chip discipline.")
 
 
+def design_person(state: dict) -> str:
+    """Walk the open board the way a designer would, and do the steps that are still missing."""
+    work = _work(state)
+    pcb = state["pcb"]
+    board = BOARD.get(str(work.get("board") or ""), {})
+    industry = INDUSTRY.get(str(work.get("industry") or ""), {})
+    subject = str(work.get("focus") or board.get("title") or "the open board")
+    field = industry.get("title") or "general electronics"
+    kind = board.get("title") or "unclassified board"
+    lines = [
+        f"I am designing {subject}.",
+        f"Purpose: a {kind} for {field}.",
+        "Outcome: a board a fab can build and a house can assemble. That means a wired schematic, routed copper, a simulation note, a 3D check, fabrication files, a centroid, and a BOM.",
+    ]
+    wires = list(work.get("wires") or [])
+    if wires:
+        shown = [f"{row['name']} from {row['a']} to {row['b']}" for row in wires[:8]]
+        extra = f", plus {len(wires) - 8} more" if len(wires) > 8 else ""
+        lines.append("Schematic wires: " + "; ".join(shown) + extra + ".")
+    else:
+        lines.append("Schematic wires: none yet. I will not invent nets.")
+    lines.append(apply(state, {"op": "sch_erc"}))
+    if pcb["nets"] and not pcb.get("tracks"):
+        lines.append(autoroute(state))
+    elif pcb.get("tracks"):
+        lines.append(f"PCB traces: {len(pcb['tracks'])} already routed. I did not rip them up.")
+    else:
+        lines.append("PCB traces: no nets to route.")
+    tracks = list(pcb.get("tracks") or [])
+    if tracks:
+        shown = [f"{row['name']} {row['a']} to {row['b']} at {row['width']} mm" for row in tracks[:6]]
+        extra = f", plus {len(tracks) - 6} more" if len(tracks) > 6 else ""
+        lines.append("Routes: " + "; ".join(shown) + extra + ".")
+    lines.append("Simulation activity: DC reads the rails the nets name. Transient asks whether those rails settle inside 10 ms.")
+    lines.append(apply(state, {"op": "sim_dc"}))
+    lines.append(apply(state, {"op": "sim_tran"}))
+    lines.append("3D board: I check the placed bodies and the tallest part. This is not a rendered picture.")
+    lines.append(apply(state, {"op": "view_3d"}))
+    lines.append(apply(state, {"op": "fab_stack"}))
+    lines.append("Fabrication files: " + apply(state, {"op": "fab_gerber"}))
+    lines.append(apply(state, {"op": "asm_bom"}))
+    lines.append(apply(state, {"op": "asm_pos"}))
+    return "\n".join(lines)
+
+
 def apply(state: dict, action: dict) -> str:
     op = action.get("op")
     pcb = state["pcb"]
@@ -1987,24 +2032,7 @@ def apply(state: dict, action: dict) -> str:
         pcb["released"] = False
         return f"Net {name} ties {a} to {b}."
     if op == "pcb_flow":
-        schematic = apply(state, {"op": "sch_erc"})
-        placed = f"{len(pcb['parts'])} parts" if pcb["parts"] else "layout empty"
-        lands = {row["ref"] for row in work.get("footprints") or []}
-        missing = [part["ref"] for part in pcb["parts"] if part["ref"] not in lands]
-        footprint = "footprints assigned" if pcb["parts"] and not missing else ("missing " + ", ".join(missing) if missing else "no footprints")
-        stages = [
-            "schematic: " + schematic,
-            "layout: " + placed,
-            "footprint: " + footprint,
-            "design check: " + apply(state, {"op": "pcb_drc"}),
-            "simulation: " + apply(state, {"op": "sim_dc"}),
-            "transient: " + apply(state, {"op": "sim_tran"}),
-            "3d: " + apply(state, {"op": "view_3d"}),
-            "fabrication: " + apply(state, {"op": "fab_stack"}),
-            "bom: " + apply(state, {"op": "asm_bom"}),
-            "assembly: " + apply(state, {"op": "asm_pos"}),
-        ]
-        return "PCB flow. " + " | ".join(stages)
+        return design_person(state)
     if op == "pcb_drc":
         items = drc(state)
         return "DRC: " + " ".join(f"{i['rule']} {i['status']}." for i in items)

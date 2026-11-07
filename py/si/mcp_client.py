@@ -638,6 +638,14 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
         remember(state, text.strip(), reply, ["ask"])
         save_state(state)
         return pack(reply, ["ask"], runtime, "ask_spec", snapshot(state))
+    if action and action.get("op") == "crew":
+        from py.si.agents import run_crew
+
+        return run_crew(text, approved=approved, mode=mode)
+    if action and action.get("op") == "agent":
+        from py.si.agents import run_agent
+
+        return run_agent(str(action.get("agent") or ""), text, approved=approved, mode=mode)
     calls = plan(action)
     state = snapshot(load_state())
     op = str(action.get("op") or "")
