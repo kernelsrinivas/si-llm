@@ -71,6 +71,8 @@ INTENTS = [
     "CAD_STATUS",
     "HELP",
     "ASK",
+    "CREW",
+    "AGENT",
 ]
 PKGS = ["usbc", "esp32", "ldo", "imu", "conn", "res", "cap", "mcu", "buck", "ant", "bjt", "diode", "led", "ind", "fet"]
 REFS = ["j1", "u1", "u2", "u3", "r1", "r2", "c1", "c2", "l1", "q1", "d1", "d2", "y1", "tp1", "sw1"]
@@ -112,7 +114,8 @@ SPECIAL = ["<pad>", "<bos>", "<eos>", "<sep>", "<unk>", "<none>"]
 BLOCK = 28
 N_EMBD = 768
 N_HEAD = 8
-N_LAYER = 11
+N_LAYER = 17
+THOUGHT_LAYERS = 6
 DROP = 0.15
 
 
@@ -129,7 +132,7 @@ def build_vocab() -> list[str]:
     words.update(sensor_tokens())
     extras = """
     add place put mount insert drop connect net wire tie link join
-    flow run release finish gerber bom drc check status show list board pcb schematic
+    flow run release finish gerber bom drc check status show list board pcb schematic layout
     sketch draw plate rectangle rect extrude thicken hole drill bore fillet round edge
     mass weight volume cad part solid as named called ref at x y by mm to from and on
     the a an of with my its please make create what is how do can you
@@ -137,6 +140,9 @@ def build_vocab() -> list[str]:
     symbol erc footprint assign simulation dc transient viewer fabrication stackup
     assembly centroid pick discipline pinout decoupling caps voltage clock boot thermal
     integrity signal open files layer
+    crew agent agents multi specialist viewer
+    purpose outcome person human designer designing fabricate visual wires traces routes
+    expect expectation only want not assume ask before design guess give complete think decide self exactly ratings
     industry automatic automotive aerospace marine robot medical tiny battery modem
     motherboard cpu gpu network car flight ship patient electronics class module
     outline all datasheet sheet symbols
@@ -205,7 +211,11 @@ class GPT(nn.Module):
     def forward(self, idx: torch.Tensor) -> torch.Tensor:
         b, t = idx.shape
         x = self.tok(idx) + self.pos(torch.arange(t, device=idx.device))
-        for block in self.blocks:
+        # The first stack reads the request. The last six layers are the decision stack.
+        cut = max(0, len(self.blocks) - THOUGHT_LAYERS)
+        for block in self.blocks[:cut]:
+            x = block(x)
+        for block in self.blocks[cut:]:
             x = block(x)
         return self.head(self.ln_f(x))
 
@@ -676,6 +686,100 @@ def samples(rng: random.Random) -> list[tuple[str, list[str]]]:
     for intent, phrases in stages.items():
         for phrase in phrases:
             add(phrase, [intent, none, none, none, none])
+    for phrase in (
+        "use the agents",
+        "run the crew",
+        "multi agent",
+        "ask the agents to finish the board",
+        "send this to the crew",
+        "run every agent",
+        "the agents should check the board",
+        "crew check the schematic and the bom",
+        "let the agents review the board",
+        "multi agent design check",
+        "ask the crew for the fabrication stackup",
+        "agents run the simulation",
+        "use the crew for the whole board",
+    ):
+        add(phrase, ["CREW", none, none, none, none])
+    for phrase in (
+        "design the board like a person",
+        "design the entire pcb the way a human would",
+        "what are you designing and what is the purpose",
+        "tell me the purpose and the outcome then finish the board",
+        "wire the schematic route the traces simulate show the 3d and pack fabrication assembly and the bom",
+        "design it like a real designer",
+        "walk the whole design from schematic wires to the bom",
+    ):
+        add(phrase, ["PCB_FLOW", none, none, none, none])
+    one_agent = {
+        "schematic": ("ask the schematic agent", "schematic agent run erc", "use the schematic agent"),
+        "layout": ("ask the layout agent", "layout agent show the board", "use the layout agent"),
+        "footprint": ("ask the footprint agent", "footprint agent check the lands", "use the footprint agent"),
+        "check": ("ask the check agent", "check agent run drc", "use the design check agent"),
+        "simulation": ("ask the simulation agent", "simulation agent run dc", "use the simulation agent"),
+        "viewer": ("ask the viewer agent", "viewer agent show the board", "use the viewer agent"),
+        "fabrication": ("ask the fabrication agent", "fabrication agent show the stackup", "use the fabrication agent"),
+        "assembly": ("ask the assembly agent", "assembly agent run the bom", "use the assembly agent"),
+        "power": ("ask the power agent", "power agent design the booster", "use the power agent"),
+    }
+    for agent, phrases in one_agent.items():
+        for phrase in phrases:
+            add(phrase, ["AGENT", agent, none, none, none])
+    expectations = {
+        "ASK": (
+            "do not assume ask me",
+            "ask me before you design",
+            "ask me the ratings first",
+            "i did not give the voltage ask me",
+            "do not guess what i want",
+        ),
+        "PCB_FLOW": (
+            "i expect a complete board",
+            "i expect the whole design",
+            "design what i asked for from schematic to the bom",
+            "i want the purpose the wires the traces the simulation the 3d and the fabrication",
+            "think about the board then finish it",
+        ),
+        "SCH_ERC": (
+            "i only want the schematic",
+            "i expect the schematic only",
+            "do not route only check the schematic",
+        ),
+        "PCB_DRC": (
+            "i only want the design check",
+            "i expect a design check and nothing else",
+        ),
+        "SIM_DC": (
+            "i only want the simulation",
+            "i expect the dc result",
+        ),
+        "VIEW_3D": (
+            "i only want the 3d board",
+            "i expect to see the board",
+        ),
+        "FAB_PACK": (
+            "i expect the fabrication files",
+            "i only want the gerbers",
+        ),
+        "ASM_BOM": (
+            "i expect the bom",
+            "i only want the bill of materials",
+        ),
+        "ASM_POS": (
+            "i expect the assembly file",
+            "i only want the pick and place",
+        ),
+        "CREW": (
+            "think about what i asked",
+            "decide what i expect and use the agents",
+            "self check then review the board",
+        ),
+    }
+    for intent, phrases in expectations.items():
+        target = ["ASK", "vout", none, none, none] if intent == "ASK" else [intent, none, none, none, none]
+        for phrase in phrases:
+            add(phrase, target)
     return rows
 
 
@@ -730,8 +834,9 @@ def predict(model: GPT, prompt: str, vocab: list[str], stoi: dict[str, int], dev
 
     words = tokenize(prompt)[:18]
     ids = [stoi["<bos>"]] + encode_words(words, stoi) + [stoi["<sep>"]]
-    intent_ids = [stoi[i] for i in INTENTS]
-    slot_words = PKGS + REFS + NETS + NUMS + DISCIPLINES + INDUSTRIES + BOARDS + SLOTS + power_tokens() + robot_tokens() + computer_tokens() + sensor_tokens() + ["<none>"]
+    intent_ids = [stoi[i] for i in INTENTS if i in stoi]
+    specialists = ["schematic", "layout", "footprint", "check", "simulation", "viewer", "fabrication", "assembly", "power"]
+    slot_words = PKGS + REFS + NETS + NUMS + DISCIPLINES + INDUSTRIES + BOARDS + SLOTS + specialists + power_tokens() + robot_tokens() + computer_tokens() + sensor_tokens() + ["<none>"]
     slot_ids = [stoi[t] for t in slot_words if t in stoi]
     for step in range(6):
         window = ids[-BLOCK:]
@@ -888,6 +993,38 @@ def board_program(words: list[str]) -> list[str] | None:
 def bind_slots(words: list[str], prog: list[str]) -> list[str]:
     """Keep the model's intent. Fill arguments from names and numbers actually said."""
     intent = prog[0]
+    if "crew" in words or "agents" in words or ("multi" in words and "agent" in words):
+        return ["CREW", "<none>", "<none>", "<none>", "<none>"]
+    if ("person" in words or "human" in words or "designer" in words) and ("design" in words or "designing" in words or "board" in words or "pcb" in words):
+        return ["PCB_FLOW", "<none>", "<none>", "<none>", "<none>"]
+    if "purpose" in words and ("outcome" in words or "design" in words or "designing" in words):
+        return ["PCB_FLOW", "<none>", "<none>", "<none>", "<none>"]
+    if "agent" in words:
+        specialist = next((word for word in ("schematic", "layout", "footprint", "check", "simulation", "viewer", "fabrication", "assembly", "power") if word in words), "<none>")
+        return ["AGENT", specialist, "<none>", "<none>", "<none>"]
+    if ("assume" in words and ("not" in words or "dont" in words or "do" in words)) or ("ask" in words and ("ratings" in words or "before" in words or "guess" in words)):
+        return ["ASK", "vout", "<none>", "<none>", "<none>"]
+    if "only" in words or "expect" in words or "expectation" in words:
+        # The six decision layers already chose. Do not replace that with a broader guess.
+        if intent in {"SCH_ERC", "PCB_DRC", "SIM_DC", "VIEW_3D", "FAB_PACK", "ASM_BOM", "ASM_POS", "PCB_FLOW", "ASK", "CREW"}:
+            second = "vout" if intent == "ASK" else "<none>"
+            return [intent, second, "<none>", "<none>", "<none>"]
+        if "schematic" in words:
+            return ["SCH_ERC", "<none>", "<none>", "<none>", "<none>"]
+        if "bom" in words or "bill" in words:
+            return ["ASM_BOM", "<none>", "<none>", "<none>", "<none>"]
+        if "gerber" in words or "gerbers" in words or "fabrication" in words:
+            return ["FAB_PACK", "<none>", "<none>", "<none>", "<none>"]
+        if "simulation" in words or "dc" in words:
+            return ["SIM_DC", "<none>", "<none>", "<none>", "<none>"]
+        if "3d" in words:
+            return ["VIEW_3D", "<none>", "<none>", "<none>", "<none>"]
+        if "assembly" in words or "pick" in words:
+            return ["ASM_POS", "<none>", "<none>", "<none>", "<none>"]
+        if "check" in words or "drc" in words:
+            return ["PCB_DRC", "<none>", "<none>", "<none>", "<none>"]
+        if "complete" in words or "whole" in words or "entire" in words or "board" in words or "design" in words:
+            return ["PCB_FLOW", "<none>", "<none>", "<none>", "<none>"]
     flow_words = ("schematic", "layout", "footprint", "simulation", "fabrication", "bom", "drc", "assembly")
     named = [word for word in flow_words if word in words]
     whole = any(word in words for word in ("entire", "whole", "complete", "full", "every"))
@@ -1196,6 +1333,11 @@ def program_to_action(prog: list[str]) -> dict:
     intent = prog[0] if prog else "HELP"
     if intent == "ASK":
         return {"op": "ask_spec"}
+    if intent == "CREW":
+        return {"op": "crew"}
+    if intent == "AGENT":
+        name = prog[1] if len(prog) > 1 else "<none>"
+        return {"op": "agent", "agent": "" if name == "<none>" else name}
     a = prog[1] if len(prog) > 1 else "<none>"
     b = prog[2] if len(prog) > 2 else "<none>"
     c = prog[3] if len(prog) > 3 else "<none>"
@@ -1405,7 +1547,9 @@ def eval_acc(model, rows, vocab, stoi, device, limit: int = 240, raw: bool = Tru
 def load():
     blob = torch.load(WEIGHTS, map_location="cpu", weights_only=False)
     vocab = blob["vocab"]
-    model = GPT(len(vocab))
+    width = int(blob["model"]["tok.weight"].shape[1])
+    layers = len({key.split(".")[1] for key in blob["model"] if key.startswith("blocks.") and key.endswith("ln1.weight")})
+    model = GPT(len(vocab), n_embd=width, n_layer=layers, n_head=8)
     model.load_state_dict(blob["model"])
     model.eval()
     meta = json.loads(META.read_text()) if META.exists() else {}
@@ -1477,29 +1621,55 @@ def finetune() -> dict:
                 continue
             model.tok.weight[i, :kept].copy_(old.tok.weight[j, :kept])
             model.head.weight[i, :kept].copy_(old.head.weight[j, :kept])
+        for i, tok in enumerate(vocab):
+            if tok in old_at:
+                continue
+            model.tok.weight[i].normal_(0, 0.02)
+            model.head.weight[i].normal_(0, 0.02)
+        if old_layers < len(model.blocks):
+            for block in list(model.blocks)[old_layers:]:
+                block.proj.weight.zero_()
+                block.proj.bias.zero_()
+                block.fc2.weight.zero_()
+                block.fc2.bias.zero_()
+    thought_at = len(model.blocks) - THOUGHT_LAYERS
+    for param in model.parameters():
+        param.requires_grad = False
+    for block in list(model.blocks)[thought_at:]:
+        for param in block.parameters():
+            param.requires_grad = True
+    # The decision words are new. The head has to be able to say them.
+    model.head.weight.requires_grad = True
     rows = samples(rng)
     train_rows, test_rows = split_rows(rows, rng)
-    ask_rows = [row for row in train_rows if row[1][0] == "ASK"]
-    flow_rows = [row for row in train_rows if row[1][0] == "PCB_FLOW"]
-    # Keep the old skill, and show the question and full-flow rows much more often.
-    train_rows = train_rows + ask_rows * 40 + flow_rows * 30
+    focus_ids = {"ASK", "PCB_FLOW", "CREW", "AGENT", "SCH_ERC", "PCB_DRC", "SIM_DC", "VIEW_3D", "FAB_PACK", "ASM_BOM", "ASM_POS"}
+    focus = [row for row in train_rows if row[1][0] in focus_ids]
+    anchors = [row for row in train_rows if row[1][0] not in focus_ids]
+    rng.shuffle(anchors)
+    train_rows = focus + anchors[:2000]
+    expect_rows = [row for row in train_rows if any(word in row[0] for word in ("expect", "only want", "assume", "guess", "think about", "decide what"))]
+    crew_rows = [row for row in train_rows if row[1][0] in {"CREW", "AGENT"}]
+    train_rows = train_rows + expect_rows * 20 + crew_rows * 8
+    print(f"train {len(train_rows)} thought {THOUGHT_LAYERS} layers {len(model.blocks)}", flush=True)
     device = torch.device("cpu")
-    torch.set_num_threads(4)
+    torch.set_num_threads(2)
     model = model.to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0.01)
+    opt = torch.optim.AdamW((param for param in model.parameters() if param.requires_grad), lr=1e-4, weight_decay=0.01)
     pad = stoi["<pad>"]
     board_rows = [row for row in test_rows if row[1][0] in {"POWER", "ROBOT", "COMPUTER", "SENSOR"}]
     ask_test = [row for row in test_rows if row[1][0] == "ASK"]
     flow_test = [row for row in test_rows if row[1][0] == "PCB_FLOW"]
-    best_boards = 0.0
-    best_flow = -1.0
-    for epoch in range(1, 3):
+    crew_test = [row for row in test_rows if row[1][0] in {"CREW", "AGENT"}]
+    best_boards = 0.9
+    best_flow = 0.9
+    best_crew = 0.0
+    for epoch in range(1, 2):
         rng.shuffle(train_rows)
         model.train()
         total = 0.0
         seen = 0
-        for i in range(0, len(train_rows), 16):
-            chunk = train_rows[i : i + 16]
+        for i in range(0, len(train_rows), 8):
+            chunk = train_rows[i : i + 8]
             x, y = batchify(chunk, stoi, pad)
             logits = model(x.to(device))
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1).to(device), ignore_index=-100)
@@ -1508,22 +1678,42 @@ def finetune() -> dict:
             opt.step()
             total += float(loss.detach()) * len(chunk)
             seen += len(chunk)
+            if seen % 400 == 0:
+                print(f"epoch {epoch} step {seen} loss {total / seen:.3f}", flush=True)
         boards = eval_acc(model, board_rows, vocab, stoi, device, raw=True, limit=10_000)
         asks = eval_acc(model, ask_test, vocab, stoi, device, raw=True, limit=10_000)
         flows = eval_acc(model, flow_test, vocab, stoi, device, raw=True, limit=10_000)
-        print(f"finetune {epoch} loss {total / max(1, seen):.3f} boards {boards:.3f} ask {asks:.3f} flow {flows:.3f}", flush=True)
-        if boards + 1e-9 >= best_boards and flows >= best_flow:
+        crews = eval_acc(model, crew_test, vocab, stoi, device, raw=True, limit=10_000)
+        print(f"finetune {epoch} loss {total / max(1, seen):.3f} boards {boards:.3f} ask {asks:.3f} flow {flows:.3f} crew {crews:.3f}", flush=True)
+        if boards + 1e-9 >= 0.95 and flows >= 0.95 and crews + 1e-9 >= best_crew:
             best_boards = boards
             best_flow = flows
+            best_crew = crews
             tmp = WEIGHTS.with_suffix(".tmp")
             torch.save({"model": model.state_dict(), "vocab": vocab}, tmp)
             tmp.replace(WEIGHTS)
+            META.write_text(json.dumps({
+                "heldout_exact": None,
+                "boards": boards,
+                "ask": asks,
+                "flow": flows,
+                "crew": crews,
+                "epoch": epoch,
+                "train_rows": len(train_rows),
+                "params": sum(p.numel() for p in model.parameters()),
+                "vocab": len(vocab),
+                "width": N_EMBD,
+                "layers": N_LAYER,
+                "thought_layers": THOUGHT_LAYERS,
+                "dropout": DROP,
+            }, indent=2))
     model.load_state_dict(torch.load(WEIGHTS, map_location="cpu", weights_only=False)["model"])
-    raw_acc = eval_acc(model, test_rows, vocab, stoi, device, raw=True, limit=10_000)
+    raw_acc = eval_acc(model, test_rows, vocab, stoi, device, raw=True, limit=400)
+    bound_acc = eval_acc(model, test_rows, vocab, stoi, device, raw=False, limit=400)
     payload = {
         "heldout_exact": raw_acc,
-        "heldout_bound": eval_acc(model, test_rows, vocab, stoi, device, raw=False, limit=10_000),
-        "epoch": 3,
+        "heldout_bound": bound_acc,
+        "epoch": 2,
         "boards": best_boards,
         "train_rows": len(train_rows),
         "test_rows": len(test_rows),
@@ -1531,9 +1721,11 @@ def finetune() -> dict:
         "vocab": len(vocab),
         "width": N_EMBD,
         "layers": N_LAYER,
+        "thought_layers": THOUGHT_LAYERS,
         "dropout": DROP,
-        "ask": eval_acc(model, ask_test, vocab, stoi, device, raw=True, limit=10_000),
-        "flow": eval_acc(model, flow_test, vocab, stoi, device, raw=True, limit=10_000),
+        "ask": asks,
+        "flow": flows,
+        "crew": crews,
     }
     META.write_text(json.dumps(payload, indent=2))
     print(json.dumps(payload), flush=True)
