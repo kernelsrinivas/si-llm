@@ -328,7 +328,10 @@ int converse(std::string text, bool yes, const std::string &mode) {
 }
 
 void help() {
-  std::cout << "si \"what is a buck converter\"\n"
+  std::cout << "si agents\n"
+            << "si agent <name> \"task\"\n"
+            << "si crew \"finish the board\"\n"
+            << "si \"what is a buck converter\"\n"
             << "The server must already be running. Start it with: sh startup.sh\n";
 }
 
@@ -378,6 +381,61 @@ int mcp(const std::vector<std::string> &argv) {
   return 1;
 }
 
+void print_roster() {
+  std::string raw = http_get("/agents");
+  std::size_t cursor = 0;
+  bool any = false;
+  while ((cursor = raw.find("\"id\"", cursor)) != std::string::npos) {
+    std::string id = json_string_after(raw.substr(cursor), "id");
+    std::string role = json_string_after(raw.substr(cursor), "role");
+    std::string does = json_string_after(raw.substr(cursor), "does");
+    if (id.empty()) break;
+    std::cout << id << "  " << role << "  " << does << "\n";
+    any = true;
+    cursor += 4;
+  }
+  if (!any) std::cout << "No agents.\n";
+}
+
+std::string crew_body(const std::string &text, bool yes, const std::string &mode) {
+  std::ostringstream body;
+  body << "{\"text\":\"" << escape(text) << "\",\"approved\":" << (yes ? "true" : "false");
+  if (!mode.empty()) body << ",\"mode\":\"" << escape(mode) << "\"";
+  body << "}";
+  return body.str();
+}
+
+int finish_crew(std::string raw, bool yes) {
+  bool rest = json_true(raw, "crewRest");
+  bool needed = json_true(raw, "needsApproval");
+  raw = approved(raw, yes);
+  if (raw.empty()) return 2;
+  print_turn(raw);
+  if (rest && needed && !json_true(raw, "needsApproval")) {
+    raw = http_post("/crew", "{\"resume\":true,\"approved\":true}");
+    if (raw.empty()) return 2;
+    print_turn(raw);
+  }
+  return 0;
+}
+
+int agent_cmd(const std::vector<std::string> &argv, bool yes, const std::string &mode) {
+  if (argv.empty()) {
+    print_roster();
+    return 0;
+  }
+  std::string text;
+  for (std::size_t i = 1; i < argv.size(); ++i) {
+    if (!text.empty()) text.push_back(' ');
+    text += argv[i];
+  }
+  std::ostringstream body;
+  body << "{\"agent\":\"" << escape(argv[0]) << "\",\"text\":\"" << escape(text) << "\",\"approved\":" << (yes ? "true" : "false");
+  if (!mode.empty()) body << ",\"mode\":\"" << escape(mode) << "\"";
+  body << "}";
+  return finish_crew(http_post("/agent", body.str()), yes);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -402,6 +460,19 @@ int main(int argc, char **argv) {
       return 0;
     }
     if (args[0] == "mcp") return mcp(std::vector<std::string>(args.begin() + 1, args.end()));
+    if (args[0] == "agents") {
+      print_roster();
+      return 0;
+    }
+    if (args[0] == "agent") return agent_cmd(std::vector<std::string>(args.begin() + 1, args.end()), yes, mode);
+    if (args[0] == "crew") {
+      std::string text;
+      for (std::size_t i = 1; i < args.size(); ++i) {
+        if (!text.empty()) text.push_back(' ');
+        text += args[i];
+      }
+      return finish_crew(http_post("/crew", crew_body(text, yes, mode)), yes);
+    }
     std::string text;
     for (std::size_t i = 0; i < args.size(); ++i) {
       if (i) text.push_back(' ');

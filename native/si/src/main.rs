@@ -74,6 +74,20 @@ fn run(args: Vec<String>) -> Result<i32, String> {
     if cleaned[0] == "mcp" {
         return mcp(&cleaned[1..]);
     }
+    if cleaned[0] == "agents" {
+        return print_roster();
+    }
+    if cleaned[0] == "agent" {
+        if cleaned.len() < 2 {
+            return print_roster();
+        }
+        let text = cleaned[2..].join(" ");
+        return crew_call("/agent", &format!("{{\"agent\":\"{}\",\"text\":\"{}\",\"approved\":{}{}}}", escape(&cleaned[1]), escape(&text), if yes { "true" } else { "false" }, mode_json(mode_flag.as_deref())), yes);
+    }
+    if cleaned[0] == "crew" {
+        let text = cleaned[1..].join(" ");
+        return crew_call("/crew", &format!("{{\"text\":\"{}\",\"approved\":{}{}}}", escape(&text), if yes { "true" } else { "false" }, mode_json(mode_flag.as_deref())), yes);
+    }
     let text = cleaned.join(" ");
     let raw = model_ask(&text, yes, mode_flag.as_deref())?;
     if needs_approval(&raw) && !yes {
@@ -156,8 +170,77 @@ fn print_model(raw: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn mode_json(mode: Option<&str>) -> String {
+    match mode {
+        Some(mode) if !mode.is_empty() => format!(",\"mode\":\"{}\"", escape(mode)),
+        _ => String::new(),
+    }
+}
+
+fn print_roster() -> Result<i32, String> {
+    let raw = model_get("/agents")?;
+    if raw.contains("\"ok\": false") || raw.contains("\"ok\":false") {
+        return Err(json_string(&raw, "error"));
+    }
+    let mut rest = raw.as_str();
+    let mut any = false;
+    while let Some(pos) = rest.find("\"id\"") {
+        let id = json_string(&rest[pos..], "id");
+        let role = json_string(&rest[pos..], "role");
+        let does = json_string(&rest[pos..], "does");
+        if id.is_empty() {
+            break;
+        }
+        println!("{id}  {role}  {does}");
+        any = true;
+        rest = &rest[pos + 4..];
+    }
+    if !any {
+        println!("No agents.");
+    }
+    Ok(0)
+}
+
+fn crew_call(path: &str, body: &str, yes: bool) -> Result<i32, String> {
+    let mut raw = model_post(path, body)?;
+    let rest = raw.contains("\"crewRest\": true") || raw.contains("\"crewRest\":true");
+    let needed = needs_approval(&raw);
+    if needed && !yes {
+        print_model(&raw)?;
+        if !atty() {
+            println!("Not sent. Pass --yes to allow once.");
+            return Ok(2);
+        }
+        print!("Allow? [y]es / [a]lways / [n]o: ");
+        let _ = std::io::stdout().flush();
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+        let decision = match line.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => "allow",
+            "a" | "always" => "always",
+            _ => {
+                println!("Not sent.");
+                return Ok(2);
+            }
+        };
+        let proposal = json_string(&raw, "proposalId");
+        raw = model_post("/approve", &format!("{{\"proposalId\":\"{proposal}\",\"decision\":\"{decision}\"}}"))?;
+        print_model(&raw)?;
+        if rest {
+            raw = model_post("/crew", "{\"resume\":true,\"approved\":true}")?;
+            print_model(&raw)?;
+        }
+        return Ok(0);
+    }
+    print_model(&raw)?;
+    Ok(0)
+}
+
 fn print_help() {
     println!("si mode <auto|semi|man>");
+    println!("si agents");
+    println!("si agent <name> \"task\"");
+    println!("si crew \"finish the board\"");
     println!("si mcp add <name> --url <url>");
     println!("si mcp add <name> --command <command>");
     println!("si mcp list");
@@ -660,11 +743,13 @@ fn parse_string(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<Stri
     let mut out = String::new();
     while let Some(c) = chars.next() {
         match c {
-            '\\' => {
-                if let Some(n) = chars.next() {
-                    out.push(n);
-                }
-            }
+            '\\' => match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some(n) => out.push(n),
+                None => {}
+            },
             '"' => return Ok(out),
             _ => out.push(c),
         }
