@@ -21,6 +21,9 @@ PCB_TOOLS = [
                 "pkg": {"type": "string"},
                 "x": {"type": "number"},
                 "y": {"type": "number"},
+                "value": {"type": "string"},
+                "size": {"type": "string"},
+                "mpn": {"type": "string"},
             },
             "required": ["ref", "pkg", "x", "y"],
         },
@@ -30,7 +33,12 @@ PCB_TOOLS = [
         "description": "Tie two refs onto a named net.",
         "inputSchema": {
             "type": "object",
-            "properties": {"name": {"type": "string"}, "a": {"type": "string"}, "b": {"type": "string"}},
+            "properties": {
+                "name": {"type": "string"},
+                "a": {"type": "string"},
+                "b": {"type": "string"},
+                "pins": {"type": "array", "items": {"type": "string"}},
+            },
             "required": ["name", "a", "b"],
         },
     },
@@ -49,8 +57,8 @@ PCB_TOOLS = [
     {"name": "pcb_drc", "description": "Design rule check for the current board.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "pcb_status", "description": "List parts and nets.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "pcb_reset", "description": "Clear the board.", "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "sch_add", "description": "Add a symbol to the schematic.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "pkg": {"type": "string"}}, "required": ["ref", "pkg"]}},
-    {"name": "sch_wire", "description": "Draw a schematic wire.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "a": {"type": "string"}, "b": {"type": "string"}}, "required": ["name", "a", "b"]}},
+    {"name": "sch_add", "description": "Add a symbol to the schematic.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "pkg": {"type": "string"}, "value": {"type": "string"}, "size": {"type": "string"}, "mpn": {"type": "string"}}, "required": ["ref", "pkg"]}},
+    {"name": "sch_wire", "description": "Draw a schematic wire. pins may name more than two ends, such as U1.GND.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "a": {"type": "string"}, "b": {"type": "string"}, "pins": {"type": "array", "items": {"type": "string"}}}, "required": ["name", "a", "b"]}},
     {"name": "sch_erc", "description": "Electrical rule check on the schematic.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "fp_assign", "description": "Assign the library footprint for a ref.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}}, "required": ["ref"]}},
     {"name": "sim_dc", "description": "DC operating point.", "inputSchema": {"type": "object", "properties": {}}},
@@ -132,9 +140,9 @@ CAD_TOOLS = [
 
 def action_for(name: str, args: dict) -> dict | None:
     if name == "pcb_add":
-        return {"op": "pcb_add", "ref": args.get("ref"), "pkg": args.get("pkg"), "x": args.get("x"), "y": args.get("y")}
+        return {"op": "pcb_add", "ref": args.get("ref"), "pkg": args.get("pkg"), "x": args.get("x"), "y": args.get("y"), "value": args.get("value"), "size": args.get("size"), "mpn": args.get("mpn")}
     if name == "pcb_net":
-        return {"op": "pcb_net", "name": args.get("name"), "a": args.get("a"), "b": args.get("b")}
+        return {"op": "pcb_net", "name": args.get("name"), "a": args.get("a"), "b": args.get("b"), "pins": args.get("pins")}
     if name == "pcb_delete":
         return {"op": "pcb_delete", "ref": args.get("ref")}
     if name == "pcb_move":
@@ -184,9 +192,9 @@ def action_for(name: str, args: dict) -> dict | None:
     if name == "build_datasheet":
         return {"op": "build_datasheet", "variants": args.get("variants") or []}
     if name == "sch_add":
-        return {"op": "sch_add", "ref": args.get("ref"), "pkg": args.get("pkg")}
+        return {"op": "sch_add", "ref": args.get("ref"), "pkg": args.get("pkg"), "value": args.get("value"), "size": args.get("size"), "mpn": args.get("mpn")}
     if name == "sch_wire":
-        return {"op": "sch_wire", "name": args.get("name"), "a": args.get("a"), "b": args.get("b")}
+        return {"op": "sch_wire", "name": args.get("name"), "a": args.get("a"), "b": args.get("b"), "pins": args.get("pins")}
     if name == "fp_assign":
         return {"op": "fp_assign", "ref": args.get("ref")}
     if name == "chip_check":
@@ -250,7 +258,7 @@ def make_handler(server_name: str, tools: list[dict]):
         def do_GET(self) -> None:  # noqa: N802
             path = self.path.split("?", 1)[0]
             if path == "/health":
-                self._send(200, {"ok": True, "server": server_name, "tools": [t["name"] for t in tools]})
+                self._send(200, {"ok": True, "server": server_name, "version": "0.9.0", "api": ["mcp"], "tools": [t["name"] for t in tools]})
                 return
             self._send(404, {"ok": False})
 
@@ -265,6 +273,9 @@ def make_handler(server_name: str, tools: list[dict]):
                 return
             req_id = body.get("id")
             method = body.get("method")
+            if method == "notifications/initialized" or req_id is None:
+                self._send(202, {"ok": True})
+                return
             if method == "initialize":
                 self._send(
                     200,
@@ -274,7 +285,7 @@ def make_handler(server_name: str, tools: list[dict]):
                         "result": {
                             "protocolVersion": "2024-11-05",
                             "capabilities": {"tools": {}},
-                            "serverInfo": {"name": server_name, "version": "1.0.0"},
+                            "serverInfo": {"name": server_name, "version": "0.9.0"},
                         },
                     },
                 )
@@ -317,11 +328,13 @@ def stdio_loop(server_name: str, tools: list[dict]) -> None:
             continue
         req_id = body.get("id")
         method = body.get("method")
+        if method == "notifications/initialized" or req_id is None:
+            continue
         if method == "initialize":
             result = {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": server_name, "version": "1.0.0"},
+                "serverInfo": {"name": server_name, "version": "0.9.0"},
             }
             response = {"jsonrpc": "2.0", "id": req_id, "result": result}
         elif method == "tools/list":

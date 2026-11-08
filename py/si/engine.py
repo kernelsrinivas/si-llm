@@ -226,6 +226,38 @@ def canon_ref(raw: str) -> str:
     return raw.strip().upper()
 
 
+def pin_ends(action: dict) -> list[str]:
+    """Keep U1.VOUT and C1.2. A net may name more than two ends."""
+    raw = action.get("pins")
+    if isinstance(raw, str):
+        raw = [part.strip() for part in raw.split(",") if part.strip()]
+    if not isinstance(raw, list) or not raw:
+        raw = [action.get("a"), action.get("b")]
+    ends = []
+    for item in raw:
+        text = str(item or "").strip()
+        if not text or text == "<none>":
+            continue
+        if "." in text:
+            ref, pin = text.split(".", 1)
+            ends.append(f"{canon_ref(ref)}.{pin.strip().upper()}")
+        else:
+            ends.append(canon_ref(text))
+    return ends
+
+
+def ref_of(end: str) -> str:
+    return str(end).split(".", 1)[0]
+
+
+def part_extra(action: dict) -> dict:
+    extra = {}
+    for key in ("value", "size", "mpn"):
+        if action.get(key):
+            extra[key] = str(action[key])
+    return extra
+
+
 def clearance_mm(state: dict) -> float:
     work = state.get("work") or {}
     gaps = [8.0]
@@ -1811,21 +1843,26 @@ def apply(state: dict, action: dict) -> str:
         ref = canon_ref(str(action["ref"]))
         pkg = canon_pkg(str(action["pkg"]))
         work["symbols"] = [s for s in work["symbols"] if s["ref"] != ref]
-        work["symbols"].append({"ref": ref, "pkg": pkg})
-        return f"Schematic symbol {pkg} as {ref}."
+        work["symbols"].append({"ref": ref, "pkg": pkg, **part_extra(action)})
+        extra = part_extra(action)
+        detail = " ".join(extra[key] for key in ("value", "size", "mpn") if key in extra)
+        return f"Schematic symbol {pkg} as {ref}" + (f" {detail}." if detail else ".")
     if op == "sch_wire":
         name = canon_net(str(action["name"]))
-        a, b = canon_ref(str(action["a"])), canon_ref(str(action["b"]))
-        work["wires"] = [n for n in work["wires"] if not (n["name"] == name and n["a"] == a and n["b"] == b)]
-        work["wires"].append({"name": name, "a": a, "b": b})
-        return f"Schematic wire {name} from {a} to {b}."
+        ends = pin_ends(action)
+        if len(ends) < 2:
+            return "Name at least two pins, for example U1.VOUT and C1.2."
+        for a, b in zip(ends, ends[1:]):
+            work["wires"] = [n for n in work["wires"] if not (n["name"] == name and n["a"] == a and n["b"] == b)]
+            work["wires"].append({"name": name, "a": a, "b": b})
+        return f"Schematic wire {name} ties {', '.join(ends)}."
     if op == "sch_erc":
         symbols = work["symbols"]
         if not symbols:
             return "Schematic is empty."
         refs = [s["ref"] for s in symbols]
         wires = work["wires"]
-        touched = {n["a"] for n in wires} | {n["b"] for n in wires}
+        touched = {ref_of(n["a"]) for n in wires} | {ref_of(n["b"]) for n in wires}
         names = {n["name"] for n in wires}
         pkgs = {s["pkg"] for s in symbols}
         notes = []
@@ -2036,10 +2073,12 @@ def apply(state: dict, action: dict) -> str:
         pkg = canon_pkg(str(action["pkg"]))
         x, y = float(action["x"]), float(action["y"])
         pcb["parts"] = [p for p in pcb["parts"] if p["ref"] != ref]
-        pcb["parts"].append({"ref": ref, "pkg": pkg, "x": x, "y": y})
+        pcb["parts"].append({"ref": ref, "pkg": pkg, "x": x, "y": y, **part_extra(action)})
         pcb["tracks"] = []
         pcb["released"] = False
-        return f"Placed {pkg} as {ref} at ({x:g}, {y:g}) mm."
+        extra = part_extra(action)
+        detail = " ".join(extra[key] for key in ("value", "size", "mpn") if key in extra)
+        return f"Placed {pkg} as {ref} at ({x:g}, {y:g}) mm" + (f" {detail}." if detail else ".")
     if op == "pcb_delete":
         ref = canon_ref(str(action["ref"]))
         before = len(pcb["parts"])
@@ -2109,12 +2148,15 @@ def apply(state: dict, action: dict) -> str:
         return str(action.get("text") or "")
     if op == "pcb_net":
         name = canon_net(str(action["name"]))
-        a, b = canon_ref(str(action["a"])), canon_ref(str(action["b"]))
-        pcb["nets"] = [n for n in pcb["nets"] if not (n["name"] == name and n["a"] == a and n["b"] == b)]
-        pcb["nets"].append({"name": name, "a": a, "b": b})
+        ends = pin_ends(action)
+        if len(ends) < 2:
+            return "Name at least two pins, for example U1.GND and C1.2."
+        for a, b in zip(ends, ends[1:]):
+            pcb["nets"] = [n for n in pcb["nets"] if not (n["name"] == name and n["a"] == a and n["b"] == b)]
+            pcb["nets"].append({"name": name, "a": a, "b": b})
         pcb["tracks"] = []
         pcb["released"] = False
-        return f"Net {name} ties {a} to {b}."
+        return f"Net {name} ties {', '.join(ends)}."
     if op == "pcb_flow":
         return design_person(state)
     if op == "pcb_drc":

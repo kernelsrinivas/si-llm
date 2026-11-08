@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from py.si.agents import roster, run_agent, run_crew
 from py.si.engine import load_state, snapshot
-from py.si.mcp_client import add_preset, add_server, current_mode, datasheet_turn, decide, designer_turn, pack, probe, remove_server, set_mode
+from py.si.mcp_client import VERSION, add_preset, add_server, current_mode, datasheet_turn, decide, designer_turn, pack, probe, remove_server, set_mode
 from py.si.net import META
 
 HOST = "127.0.0.1"
@@ -47,6 +48,8 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "role": "mcp-client",
+                    "version": VERSION,
+                    "api": ["ask", "approve", "crew", "agent", "datasheet", "mcp"],
                     "model": {
                         "name": "si-pcb-cad",
                         "stack": "pytorch",
@@ -68,6 +71,15 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.headers.get("Origin"):
+            self._send(403, {"ok": False, "error": "browser origin is not accepted"})
+            return
+        token = os.environ.get("SI_TOKEN")
+        if token:
+            auth = self.headers.get("Authorization") or ""
+            if auth != f"Bearer {token}" and self.headers.get("X-SI-Token") != token:
+                self._send(401, {"ok": False, "error": "token required"})
+                return
         path = self.path.split("?", 1)[0]
         try:
             body = self._read()

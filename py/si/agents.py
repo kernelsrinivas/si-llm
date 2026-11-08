@@ -31,7 +31,7 @@ AGENTS = (
 )
 
 _BROAD = ("entire", "whole", "finish", "flow", "everything", "all", "complete", "crew")
-_CREW: dict = {"left": [], "reports": [], "text": "", "mode": None, "approved": False}
+_CREW: dict = {"left": [], "reports": [], "text": "", "mode": None, "approved": False, "skip": ""}
 
 
 def roster() -> list[dict]:
@@ -166,6 +166,9 @@ def run_crew(text: str, approved: bool = False, mode: str | None = None, resume:
         mode = _CREW["mode"]
         approved = True
         left = list(_CREW["left"])
+        if _CREW.get("skip") and left and left[0] == _CREW["skip"]:
+            left.pop(0)
+        _CREW["skip"] = ""
         reports = list(_CREW["reports"])
     else:
         if not text.strip():
@@ -182,6 +185,7 @@ def run_crew(text: str, approved: bool = False, mode: str | None = None, resume:
         report = _run_one(agent, text, approved, mode)
         if report["needsApproval"] and report.get("turn"):
             _CREW["left"] = left
+            _CREW["skip"] = left[0]
             _CREW["reports"] = reports
             turn = report["turn"]
             turn["reply"] = _transcript(reports, agent["role"]) + f"\n\n{agent['role']}\n{report['reply']}"
