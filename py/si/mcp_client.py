@@ -308,10 +308,11 @@ def call_tool(server_id: str, name: str, arguments: dict | None = None) -> dict:
     if row is None:
         raise RuntimeError("not connected")
     result = rpc(row, "tools/call", {"name": name, "arguments": arguments or {}}, tool=True)
-    text = ""
     content = result.get("content") or []
-    if content:
-        text = str(content[0].get("text") or "")
+    texts = [str(item.get("text") or "") for item in content if item.get("type", "text") == "text" and item.get("text")]
+    text = "\n".join(texts)
+    if not text and any(item.get("type") == "image" for item in content):
+        text = "3D view returned a picture and no height summary."
     if result.get("isError"):
         raise RuntimeError(text or "The tool refused the call.")
     state = (result.get("structuredContent") or {}).get("state")
@@ -346,6 +347,9 @@ def plan(action: dict) -> list[tuple[str, str, dict]]:
         calls = []
         for step in action.get("steps") or []:
             calls.extend(plan(step))
+        if len(calls) > 1 and len({server for server, _tool, _args in calls}) == 1:
+            steps = [{"tool": tool, **args} for _server, tool, args in calls]
+            return [(calls[0][0], "batch", {"steps": steps, "undo": "one"})]
         return calls
     if op == "pcb_add":
         return [("pcb", "pcb_add", _part_args(action, True))]
@@ -383,6 +387,18 @@ def plan(action: dict) -> list[tuple[str, str, dict]]:
         return [("pcb", "pcb_reset", {})]
     if op == "sch_add":
         return [("pcb", "sch_add", _part_args(action, False))]
+    if op == "sch_set":
+        args = {"ref": action["ref"]}
+        for key in ("value", "size", "mpn"):
+            if action.get(key):
+                args[key] = action[key]
+        return [("pcb", "sch_set", args)]
+    if op == "pcb_set":
+        args = {"ref": action["ref"]}
+        for key in ("value", "size", "mpn"):
+            if action.get(key):
+                args[key] = action[key]
+        return [("pcb", "pcb_set", args)]
     if op == "sch_wire":
         return [("pcb", "sch_wire", _net_args(action))]
     if op == "sch_erc":
@@ -918,6 +934,18 @@ def _named_part(text: str) -> str:
 
 def sentence_plan(text: str) -> dict | None:
     """One sentence can be several adds and pin nets. SiEDA should not have to guess."""
+    change = re.search(r"\b(?:change|set|update)\s+([rcdlqjuy]\d+)\b", text, re.I)
+    if change:
+        ref = change.group(1).upper()
+        value = re.search(r"\b(\d+(?:\.\d+)?[kKmMuUnNpPrR]?\d*)\b", text[change.end() :])
+        size = re.search(r"\b(0201|0402|0603|0805|1206)\b", text, re.I)
+        step = {"op": "sch_set", "ref": ref}
+        if value:
+            step["value"] = value.group(1)
+        if size:
+            step["size"] = size.group(1)
+        if len(step) > 2:
+            return step
     low = re.sub(r"[^a-z0-9.+]+", " ", text.lower())
     pins = [f"{ref.upper()}.{pin.upper()}" for ref, pin in _PIN.findall(text)]
     if len(pins) >= 2 and any(word in low.split() for word in ("connect", "net", "wire", "tie")):
