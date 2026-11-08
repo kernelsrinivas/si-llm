@@ -21,7 +21,7 @@ from py.si.net import load, predict, program_to_action
 CONFIG = ROOT / "mcp.json"
 PCB_MCP = os.environ.get("SI_PCB_MCP", "http://127.0.0.1:8766/mcp")
 CAD_MCP = os.environ.get("SI_CAD_MCP", "http://127.0.0.1:8767/mcp")
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 PRESETS = {
     "pcb": {"name": "pcb", "title": "PCB", "transport": "http", "target": PCB_MCP},
     "cad": {"name": "cad", "title": "CAD", "transport": "http", "target": CAD_MCP},
@@ -62,7 +62,19 @@ def _summary(text: str) -> str:
         done = int(data.get("undone") or data.get("redone") or 0)
         verb = "Undid" if "undone" in data else "Redid"
         return f"{verb} {done} step{'s' if done != 1 else ''}."
-    if not isinstance(data, dict) or not isinstance(data.get("violations"), list):
+    if isinstance(data, dict) and not isinstance(data.get("violations"), list):
+        bits = []
+        for key, value in data.items():
+            if isinstance(value, bool):
+                bits.append(f"{key} {str(value).lower()}")
+            elif isinstance(value, (int, float)) or (isinstance(value, str) and len(value) <= 80):
+                bits.append(f"{key} {value}")
+            elif isinstance(value, list):
+                bits.append(f"{key}: {len(value)}")
+            if len(bits) == 8:
+                break
+        return (", ".join(bits) + ".") if bits else text
+    if not isinstance(data, dict):
         return text
     errors, warnings = int(data.get("errors") or 0), int(data.get("warnings") or 0)
     line = f"{errors} error{'s' if errors != 1 else ''}, {warnings} warning{'s' if warnings != 1 else ''}"
@@ -911,6 +923,28 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
     op = str(action.get("op") or "")
     if op == "note":
         return pack(str(action.get("text")), ["hear"], runtime, op, state)
+    asked_help = bool(re.search(r"\b(help|commands|what can you do)\b", text.lower()))
+    if not calls and op != "error" and not asked_help:
+        guess = fallback_plan(text)
+        if guess and guess.get("note"):
+            return pack(guess["note"], ["fallback"], "fallback", "note", state)
+        if guess:
+            resolved = [guess["call"]]
+            if not approved and (not guess["readonly"] or gated(resolved, mode)):
+                proposal_id = secrets.token_hex(4)
+                with _GUARD:
+                    _hold(proposal_id, {"calls": resolved, "runtime": "fallback", "program": [], "op": guess["call"][1]})
+                return pack(
+                    f"Approval required: no si-llm command matched, so this would call {guess['call'][1]}.",
+                    [f"{server}.{tool}" for server, tool, _args in resolved],
+                    "fallback",
+                    guess["call"][1],
+                    state,
+                    needs=True,
+                    proposal_id=proposal_id,
+                    calls=public_calls(resolved),
+                )
+            return execute(resolved, "fallback", [], guess["call"][1])
     if op == "help" or (not calls and op != "error"):
         reply = HELP if op == "help" else "Say that again as a PCB place/net/flow or a CAD sketch/extrude/hole."
         return pack(reply, ["help"], runtime, op, state)
@@ -989,6 +1023,65 @@ _PIN = re.compile(r"\b([a-z]+\d+)\.([a-z0-9]+)\b", re.I)
 _BESIDE = re.compile(r"\b([rcdlqjuy]\d+)\b.*\bnext to\b.*\b([rcdlqjuy]\d+)\b", re.I)
 _COORD = re.compile(r"\b([A-Za-z]+\d+)\b(?:\s+[A-Za-z0-9.+-]+)?\s+\(\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\)")
 _NET_SKIP = {"the", "a", "an", "this", "that", "to", "from", "and", "on", "its", "their", "one", "new", "between"}
+_GROUP_WORDS = {"pcb", "sch", "schematic", "sim", "output", "project", "library", "verify", "si", "render", "mcp"}
+_FALLBACK_SKIP = {
+    "project_new",
+    "project_open",
+    "project_load_example",
+    "project_load_json",
+    "project_save",
+    "project_cloud",
+    "project_git",
+    "project_live",
+    "project_lessons",
+    "project_assistant",
+    "pcb_reset",
+    "batch",
+}
+
+
+def _stem(word: str) -> str:
+    return word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word
+
+
+def fallback_plan(text: str) -> dict | None:
+    """A server tool whose name words are all in the sentence, or a note if two tie."""
+    said = {_stem(word) for word in re.findall(r"[a-z0-9]+", text.lower())}
+    refs = [ref.upper() for ref in re.findall(r"\b([a-z]{1,3}\d+)\b", text.lower())]
+    found: list[tuple[int, str, dict, bool]] = []
+    for row in _live_rows():
+        try:
+            listed = rpc(row, "tools/list").get("tools") or []
+        except Exception:
+            continue
+        for tool in listed:
+            name = str(tool.get("name") or "")
+            parts = [_stem(part) for part in name.lower().split("_") if part]
+            core = [part for part in parts if part not in _GROUP_WORDS]
+            if not core or name in _FALLBACK_SKIP or not all(part in said for part in core):
+                continue
+            required = list((tool.get("inputSchema") or {}).get("required") or [])
+            if required == ["ref"] and refs:
+                args = {"ref": refs[0]}
+            elif required:
+                continue
+            else:
+                args = {}
+            hints = tool.get("annotations") or {}
+            readonly = bool(hints.get("readOnlyHint")) or name in READONLY
+            score = 10 * len(core) + (1 if parts and parts[0] in said else 0)
+            found.append((score, row["id"], {"name": name, "args": args}, readonly))
+    if not found:
+        return None
+    found.sort(key=lambda hit: (-hit[0], len(hit[2]["name"])))
+    best = [hit for hit in found if hit[0] == found[0][0]]
+    names = sorted({hit[2]["name"] for hit in best})
+    if len(names) > 1:
+        return {"note": "Did you mean " + " or ".join(names[:4]) + "? Say it with that tool's words."}
+    _score, server, picked, readonly = best[0]
+    return {"call": (server, picked["name"], picked["args"]), "readonly": readonly}
+
+
 _CHIP_KINDS = {
     "pin": "pin",
     "pins": "pin",
