@@ -19,6 +19,7 @@ from py.si.net import load, predict, program_to_action
 CONFIG = ROOT / "mcp.json"
 PCB_MCP = os.environ.get("SI_PCB_MCP", "http://127.0.0.1:8766/mcp")
 CAD_MCP = os.environ.get("SI_CAD_MCP", "http://127.0.0.1:8767/mcp")
+VERSION = "0.9.0"
 PRESETS = {
     "pcb": {"name": "pcb", "title": "PCB", "transport": "http", "target": PCB_MCP},
     "cad": {"name": "cad", "title": "CAD", "transport": "http", "target": CAD_MCP},
@@ -28,7 +29,18 @@ _MODEL = None
 _RPC_ID = 0
 _PENDING: dict[str, dict] = {}
 _STDIO: dict[str, "StdioSession"] = {}
+_HTTP: dict[str, dict] = {}
 _GUARD = threading.Lock()
+
+
+def rpc_timeout(tool: bool = False) -> float:
+    raw = os.environ.get("SI_MCP_TIMEOUT")
+    if raw:
+        try:
+            return max(1.0, float(raw))
+        except ValueError:
+            pass
+    return 60.0 if tool else 8.0
 
 
 def model_bundle():
@@ -70,7 +82,7 @@ def _safe_name(name: str) -> str:
 
 def _safe_target(target: str) -> str:
     clean = target.strip()
-    if not clean or len(clean) > 240:
+    if not clean or len(clean) > 2000:
         raise ValueError("Give an MCP URL or command.")
     if any(ch in clean for ch in "\n;&|`$><"):
         raise ValueError("That command is not allowed.")
@@ -88,7 +100,7 @@ class StdioSession:
             bufsize=1,
         )
 
-    def rpc(self, method: str, params: dict | None = None) -> dict:
+    def rpc(self, method: str, params: dict | None = None, tool: bool = False) -> dict:
         global _RPC_ID
         if self.proc.poll() is not None or self.proc.stdin is None or self.proc.stdout is None:
             raise RuntimeError("stdio MCP exited")
@@ -98,7 +110,7 @@ class StdioSession:
             body["params"] = params
         self.proc.stdin.write(json.dumps(body) + "\n")
         self.proc.stdin.flush()
-        ready, _, _ = select.select([self.proc.stdout], [], [], 8)
+        ready, _, _ = select.select([self.proc.stdout], [], [], rpc_timeout(tool))
         if not ready:
             raise TimeoutError("stdio MCP timed out")
         line = self.proc.stdout.readline()
@@ -107,38 +119,103 @@ class StdioSession:
             raise RuntimeError(payload["error"].get("message") or "MCP error")
         return payload.get("result") or {}
 
+    def notify(self, method: str, params: dict | None = None) -> None:
+        if self.proc.poll() is not None or self.proc.stdin is None:
+            raise RuntimeError("stdio MCP exited")
+        body = {"jsonrpc": "2.0", "method": method}
+        if params is not None:
+            body["params"] = params
+        self.proc.stdin.write(json.dumps(body) + "\n")
+        self.proc.stdin.flush()
+
     def close(self) -> None:
         if self.proc.poll() is None:
             self.proc.terminate()
 
 
-def http_rpc(url: str, method: str, params: dict | None = None) -> dict:
+def _sse_payload(raw: str) -> dict:
+    data = ""
+    for line in raw.splitlines():
+        if line.startswith("data:"):
+            data += line[5:].strip()
+    if not data:
+        raise RuntimeError("empty MCP stream")
+    return json.loads(data)
+
+
+def _auth_headers(row: dict) -> dict[str, str]:
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    token = str(row.get("token") or os.environ.get("SI_MCP_TOKEN") or "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    session = _HTTP.get(row.get("id") or "") or {}
+    if session.get("id"):
+        headers["Mcp-Session-Id"] = session["id"]
+    return headers
+
+
+def http_rpc(url: str, method: str, params: dict | None = None, row: dict | None = None, tool: bool = False) -> dict:
     global _RPC_ID
     _RPC_ID += 1
     body = {"jsonrpc": "2.0", "id": _RPC_ID, "method": method}
     if params is not None:
         body["params"] = params
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=8) as res:
-        payload = json.loads(res.read().decode())
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=_auth_headers(row or {}))
+    with urllib.request.urlopen(req, timeout=rpc_timeout(tool)) as res:
+        session_id = res.headers.get("Mcp-Session-Id")
+        raw = res.read().decode()
+        ctype = res.headers.get("Content-Type") or ""
+    if row and row.get("id") and session_id:
+        _HTTP.setdefault(row["id"], {})["id"] = session_id
+    payload = _sse_payload(raw) if "text/event-stream" in ctype or raw.lstrip().startswith("data:") else json.loads(raw or "{}")
     if "error" in payload:
         raise RuntimeError(payload["error"].get("message") or "MCP error")
     return payload.get("result") or {}
 
 
-def rpc(row: dict, method: str, params: dict | None = None) -> dict:
+def http_notify(url: str, method: str, row: dict | None = None) -> None:
+    body = {"jsonrpc": "2.0", "method": method}
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=_auth_headers(row or {}))
+    try:
+        with urllib.request.urlopen(req, timeout=rpc_timeout(False)) as res:
+            res.read()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return
+
+
+def rpc(row: dict, method: str, params: dict | None = None, tool: bool = False) -> dict:
     if row.get("transport") == "stdio":
         with _GUARD:
             session = _STDIO.get(row["id"])
             if session is None or session.proc.poll() is not None:
                 session = StdioSession(row["target"])
                 _STDIO[row["id"]] = session
-        return session.rpc(method, params)
-    return http_rpc(row["target"], method, params)
+        return session.rpc(method, params, tool)
+    return http_rpc(row["target"], method, params, row, tool)
+
+
+def notify(row: dict, method: str) -> None:
+    if row.get("transport") == "stdio":
+        with _GUARD:
+            session = _STDIO.get(row["id"])
+        if session is not None:
+            session.notify(method)
+        return
+    http_notify(row["target"], method, row)
+
+
+def handshake(row: dict) -> dict:
+    init = rpc(
+        row,
+        "initialize",
+        {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "si-llm", "version": VERSION},
+        },
+    )
+    notify(row, "notifications/initialized")
+    return init
 
 
 def configured() -> list[dict]:
@@ -151,6 +228,7 @@ def configured() -> list[dict]:
                 "title": name.upper() if name in {"pcb", "cad"} else name,
                 "transport": spec.get("transport") or "http",
                 "target": spec.get("target") or "",
+                "token": spec.get("token") or "",
             }
         )
     return rows
@@ -160,7 +238,7 @@ def probe() -> list[dict]:
     found = []
     for row in configured():
         try:
-            init = rpc(row, "initialize")
+            init = handshake(row)
             listed = rpc(row, "tools/list")
             tools = [t.get("name") for t in listed.get("tools") or [] if t.get("name")]
             info = (init.get("serverInfo") or {}).get("name") or row["id"]
@@ -181,6 +259,8 @@ def add_server(name: str, transport: str, target: str) -> dict:
         return {"ok": False, "error": str(exc)}
     cfg = load_config()
     cfg["mcpServers"][clean] = {"transport": transport, "target": target}
+    if os.environ.get("SI_MCP_TOKEN"):
+        cfg["mcpServers"][clean]["token"] = os.environ["SI_MCP_TOKEN"]
     save_config(cfg)
     row = next((item for item in probe() if item["id"] == clean), None)
     if not row or not row["ok"]:
@@ -196,6 +276,10 @@ def add_preset(name: str) -> dict:
     preset = PRESETS.get(name)
     if not preset:
         return {"ok": False, "error": "Unknown preset."}
+    if name == "pcb" and os.environ.get("SI_PCB_MCP_CMD"):
+        return add_server("pcb", "stdio", os.environ["SI_PCB_MCP_CMD"])
+    if name == "cad" and os.environ.get("SI_CAD_MCP_CMD"):
+        return add_server("cad", "stdio", os.environ["SI_CAD_MCP_CMD"])
     return add_server(preset["name"], preset["transport"], preset["target"])
 
 
@@ -223,21 +307,50 @@ def call_tool(server_id: str, name: str, arguments: dict | None = None) -> dict:
     row = next((item for item in configured() if item["id"] == server_id), None)
     if row is None:
         raise RuntimeError("not connected")
-    result = rpc(row, "tools/call", {"name": name, "arguments": arguments or {}})
+    result = rpc(row, "tools/call", {"name": name, "arguments": arguments or {}}, tool=True)
     text = ""
     content = result.get("content") or []
     if content:
         text = str(content[0].get("text") or "")
+    if result.get("isError"):
+        raise RuntimeError(text or "The tool refused the call.")
     state = (result.get("structuredContent") or {}).get("state")
     return {"text": text, "state": state, "server": server_id, "tool": name}
 
 
+def _part_args(action: dict, placed: bool) -> dict:
+    args = {"ref": action["ref"], "pkg": action["pkg"]}
+    if placed:
+        args["x"] = action["x"]
+        args["y"] = action["y"]
+    for key in ("value", "size", "mpn"):
+        if action.get(key):
+            args[key] = action[key]
+    return args
+
+
+def _net_args(action: dict) -> dict:
+    pins = action.get("pins") or [action.get("a"), action.get("b")]
+    if isinstance(pins, str):
+        pins = [part.strip() for part in pins.split(",") if part.strip()]
+    pins = [str(pin) for pin in pins if pin and str(pin) != "<none>"]
+    args = {"name": action["name"], "a": pins[0], "b": pins[1] if len(pins) > 1 else pins[0]}
+    if len(pins) != 2 or any("." in pin for pin in pins):
+        args["pins"] = pins
+    return args
+
+
 def plan(action: dict) -> list[tuple[str, str, dict]]:
     op = action.get("op")
+    if op == "batch":
+        calls = []
+        for step in action.get("steps") or []:
+            calls.extend(plan(step))
+        return calls
     if op == "pcb_add":
-        return [("pcb", "pcb_add", {"ref": action["ref"], "pkg": action["pkg"], "x": action["x"], "y": action["y"]})]
+        return [("pcb", "pcb_add", _part_args(action, True))]
     if op == "pcb_net":
-        return [("pcb", "pcb_net", {"name": action["name"], "a": action["a"], "b": action["b"]})]
+        return [("pcb", "pcb_net", _net_args(action))]
     if op == "pcb_delete":
         return [("pcb", "pcb_delete", {"ref": action["ref"]})]
     if op == "pcb_move":
@@ -269,9 +382,9 @@ def plan(action: dict) -> list[tuple[str, str, dict]]:
     if op == "pcb_reset":
         return [("pcb", "pcb_reset", {})]
     if op == "sch_add":
-        return [("pcb", "sch_add", {"ref": action["ref"], "pkg": action["pkg"]})]
+        return [("pcb", "sch_add", _part_args(action, False))]
     if op == "sch_wire":
-        return [("pcb", "sch_wire", {"name": action["name"], "a": action["a"], "b": action["b"]})]
+        return [("pcb", "sch_wire", _net_args(action))]
     if op == "sch_erc":
         return [("pcb", "sch_erc", {})]
     if op == "fp_assign":
@@ -561,6 +674,58 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
         save_state(state)
         return pack(report, ["series-led"], "pytorch-client", "design_series_led", snapshot(state))
 
+    planned = sentence_plan(text)
+    if planned:
+        action = planned
+        runtime = "sieda"
+        calls = plan(action)
+        state = snapshot(load_state())
+        resolved, problem = resolve(calls)
+        if problem:
+            return pack(problem, [], runtime, "batch", state)
+        if not approved and gated(resolved, mode):
+            proposal_id = secrets.token_hex(4)
+            with _GUARD:
+                _PENDING[proposal_id] = {"calls": resolved, "runtime": runtime, "program": [], "op": "batch"}
+            return pack(
+                "Approval required before this MCP call.",
+                [f"{server}.{tool}" for server, tool, _args in resolved],
+                runtime,
+                "batch",
+                state,
+                needs=True,
+                proposal_id=proposal_id,
+                calls=public_calls(resolved),
+            )
+        return execute(resolved, runtime, [], "batch")
+
+    beside = place_beside(text)
+    if beside is not None:
+        action = beside
+        runtime = "sieda"
+        if action.get("op") == "note":
+            return pack(str(action.get("text")), ["hear"], runtime, "note", snapshot(load_state()))
+        calls = plan(action)
+        state = snapshot(load_state())
+        resolved, problem = resolve(calls)
+        if problem:
+            return pack(problem, [], runtime, action["op"], state)
+        if not approved and gated(resolved, mode):
+            proposal_id = secrets.token_hex(4)
+            with _GUARD:
+                _PENDING[proposal_id] = {"calls": resolved, "runtime": runtime, "program": [], "op": action["op"]}
+            return pack(
+                "Approval required before this MCP call.",
+                [f"{server}.{tool}" for server, tool, _args in resolved],
+                runtime,
+                action["op"],
+                state,
+                needs=True,
+                proposal_id=proposal_id,
+                calls=public_calls(resolved),
+            )
+        return execute(resolved, runtime, [], action["op"])
+
     hit = answer(text, float(_params(load_state())["min_clearance_mm"]))
     power_action = None
     robot_action = None
@@ -727,6 +892,91 @@ def datasheet_turn(text: str, mode: str | None = None) -> dict:
     if gaps:
         result["reply"] = result["reply"] + " " + " ".join(gaps)
     return result
+
+
+_MPN = (
+    ("esp32-s3-wroom-1", "ESP32-S3-WROOM-1"),
+    ("esp32-s3", "ESP32-S3-WROOM-1"),
+    ("esp32-wroom-32e", "ESP32-WROOM-32E"),
+    ("ams1117-3.3", "AMS1117-3.3"),
+    ("ams1117", "AMS1117-3.3"),
+    ("ap2112k-3.3", "AP2112K-3.3"),
+    ("ap2112", "AP2112K-3.3"),
+)
+_PIN = re.compile(r"\b([a-z]+\d+)\.([a-z0-9]+)\b", re.I)
+_BESIDE = re.compile(r"\b([rcdlqjuy]\d+)\b.*\bnext to\b.*\b([rcdlqjuy]\d+)\b", re.I)
+_COORD = re.compile(r"\b([A-Za-z]+\d+)\s+[A-Za-z0-9-]+\s+\(([-\d.]+),([-\d.]+)\)")
+
+
+def _named_part(text: str) -> str:
+    low = text.lower()
+    for alias, part in _MPN:
+        if alias in low:
+            return part
+    return ""
+
+
+def sentence_plan(text: str) -> dict | None:
+    """One sentence can be several adds and pin nets. SiEDA should not have to guess."""
+    low = re.sub(r"[^a-z0-9.+]+", " ", text.lower())
+    pins = [f"{ref.upper()}.{pin.upper()}" for ref, pin in _PIN.findall(text)]
+    if len(pins) >= 2 and any(word in low.split() for word in ("connect", "net", "wire", "tie")):
+        name = "GND" if "gnd" in low or "ground" in low else "5V" if "5v" in low or "5 v" in low else "NET"
+        return {"op": "batch", "steps": [{"op": "sch_wire", "name": name, "pins": pins}, {"op": "pcb_net", "name": name, "pins": pins}]}
+    if "led" in low.split() and "resistor" in low.split() and ("5v" in low or "5 v" in text.lower()):
+        return {
+            "op": "batch",
+            "steps": [
+                {"op": "sch_add", "ref": "D1", "pkg": "led", "size": "0603"},
+                {"op": "sch_add", "ref": "R1", "pkg": "res", "value": "330", "size": "0603"},
+                {"op": "sch_add", "ref": "J1", "pkg": "conn"},
+                {"op": "sch_wire", "name": "5V", "pins": ["J1.1", "R1.1"]},
+                {"op": "sch_wire", "name": "LED", "pins": ["R1.2", "D1.A"]},
+                {"op": "sch_wire", "name": "GND", "pins": ["D1.K", "J1.2"]},
+                {"op": "pcb_add", "ref": "J1", "pkg": "conn", "x": 12, "y": 20},
+                {"op": "pcb_add", "ref": "R1", "pkg": "res", "x": 28, "y": 20, "value": "330", "size": "0603"},
+                {"op": "pcb_add", "ref": "D1", "pkg": "led", "x": 44, "y": 20, "size": "0603"},
+                {"op": "pcb_net", "name": "5V", "pins": ["J1.1", "R1.1"]},
+                {"op": "pcb_net", "name": "LED", "pins": ["R1.2", "D1.A"]},
+                {"op": "pcb_net", "name": "GND", "pins": ["D1.K", "J1.2"]},
+            ],
+        }
+    part = _named_part(text)
+    if part and any(word in low.split() for word in ("place", "add", "use")):
+        pkg = "mcu" if part.startswith("ESP32") else "ldo"
+        ref = "U1"
+        step = {"op": "sch_add", "ref": ref, "pkg": pkg, "mpn": part}
+        return {"op": "batch", "steps": [step]}
+    return None
+
+
+def _status_coord(text: str, ref: str) -> tuple[float, float] | None:
+    for found, _pkg, x, y in _COORD.findall(text):
+        if found.upper() == ref:
+            return float(x), float(y)
+    return None
+
+
+def place_beside(text: str) -> dict | None:
+    match = _BESIDE.search(text)
+    if match is None:
+        return None
+    ref, anchor = match.group(1).upper(), match.group(2).upper()
+    status = ""
+    if any(row["id"] == "pcb" and row.get("target") for row in configured()):
+        try:
+            status = str(call_tool("pcb", "pcb_status", {}).get("text") or "")
+        except (urllib.error.URLError, RuntimeError, TimeoutError, OSError):
+            status = ""
+    if not status:
+        from py.si.engine import apply
+
+        status = apply(load_state(), {"op": "pcb_status"})
+    pos = _status_coord(status, anchor)
+    if pos is None:
+        return {"op": "note", "text": f"{anchor} is not on the board, so {ref} has nowhere to sit."}
+    pkg = {"r": "res", "c": "cap", "l": "ind", "d": "led", "q": "fet", "u": "mcu", "j": "conn", "y": "crystal"}.get(ref[0].lower(), "conn")
+    return {"op": "pcb_add", "ref": ref, "pkg": pkg, "x": pos[0] + 4, "y": pos[1]}
 
 
 def decide(proposal_id: str, decision: str) -> dict:
