@@ -548,6 +548,19 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
         save_state(state)
         return pack(report, ["sonar-booster"], "power", "design_sonar", snapshot(state), suggestions=sonar_suggestions(decision["spec"]))
 
+    from py.si.engine import series_led_task
+
+    if series_led_task(text):
+        from py.si.engine import design_series_led
+
+        model, vocab, stoi, _meta = model_bundle()
+        program = predict(model, text, vocab, stoi, "cpu", raw=True)
+        state = load_state()
+        report = f"Decision: {program[0]}.\n" + design_series_led(state, text)
+        remember(state, text.strip(), report, ["series-led"])
+        save_state(state)
+        return pack(report, ["series-led"], "pytorch-client", "design_series_led", snapshot(state))
+
     hit = answer(text, float(_params(load_state())["min_clearance_mm"]))
     power_action = None
     robot_action = None

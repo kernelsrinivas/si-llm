@@ -1038,6 +1038,8 @@ def board_program(words: list[str]) -> list[str] | None:
 def bind_slots(words: list[str], prog: list[str]) -> list[str]:
     """Keep the model's intent. Fill arguments from names and numbers actually said."""
     intent = prog[0]
+    if intent == "PCB_FLOW" and "design" in words and ("board" in words or "schematic" in words or "simulation" in words):
+        return ["PCB_FLOW", "<none>", "<none>", "<none>", "<none>"]
     if "crew" in words or "agents" in words or ("multi" in words and "agent" in words):
         return ["CREW", "<none>", "<none>", "<none>", "<none>"]
     if ("person" in words or "human" in words or "designer" in words) and ("design" in words or "designing" in words or "board" in words or "pcb" in words):
