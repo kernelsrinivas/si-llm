@@ -85,8 +85,11 @@ std::string http_exchange(const std::string &method, const std::string &url, con
   }
   freeaddrinfo(res);
   std::ostringstream req;
+  const char *token = std::getenv("SI_TOKEN");
   req << method << " " << path << " HTTP/1.0\r\nHost: " << host << ":" << port
-      << "\r\nContent-Type: application/json\r\nContent-Length: " << body.size() << "\r\nConnection: close\r\n\r\n" << body;
+      << "\r\nContent-Type: application/json\r\nContent-Length: " << body.size();
+  if (token && *token) req << "\r\nAuthorization: Bearer " << token;
+  req << "\r\nConnection: close\r\n\r\n" << body;
   std::string bytes = req.str();
   send(fd, bytes.data(), static_cast<int>(bytes.size()), 0);
   std::string raw;

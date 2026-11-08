@@ -58,6 +58,12 @@ PCB_TOOLS = [
     {"name": "pcb_status", "description": "List parts and nets.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "pcb_reset", "description": "Clear the board.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "sch_add", "description": "Add a symbol to the schematic.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "pkg": {"type": "string"}, "value": {"type": "string"}, "size": {"type": "string"}, "mpn": {"type": "string"}}, "required": ["ref", "pkg"]}},
+    {"name": "sch_set", "description": "Change the value, size, or part number of a symbol already on the sheet.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "value": {"type": "string"}, "size": {"type": "string"}, "mpn": {"type": "string"}}, "required": ["ref"]}},
+    {"name": "pcb_set", "description": "Change the value, size, or part number of a placed part.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "value": {"type": "string"}, "size": {"type": "string"}, "mpn": {"type": "string"}}, "required": ["ref"]}},
+    {"name": "batch", "description": "Apply several PCB edits as one undo step.", "inputSchema": {"type": "object", "properties": {"steps": {"type": "array"}, "undo": {"type": "string"}}, "required": ["steps"]}},
+    {"name": "sch_set", "description": "Change the value, size, or part number of a symbol that is already on the sheet.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "value": {"type": "string"}, "size": {"type": "string"}, "mpn": {"type": "string"}}, "required": ["ref"]}},
+    {"name": "pcb_set", "description": "Change the value, size, or part number of a placed part.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}, "value": {"type": "string"}, "size": {"type": "string"}, "mpn": {"type": "string"}}, "required": ["ref"]}},
+    {"name": "batch", "description": "Apply several PCB edits as one undo step.", "inputSchema": {"type": "object", "properties": {"steps": {"type": "array"}, "undo": {"type": "string"}}, "required": ["steps"]}},
     {"name": "sch_wire", "description": "Draw a schematic wire. pins may name more than two ends, such as U1.GND.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "a": {"type": "string"}, "b": {"type": "string"}, "pins": {"type": "array", "items": {"type": "string"}}}, "required": ["name", "a", "b"]}},
     {"name": "sch_erc", "description": "Electrical rule check on the schematic.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "fp_assign", "description": "Assign the library footprint for a ref.", "inputSchema": {"type": "object", "properties": {"ref": {"type": "string"}}, "required": ["ref"]}},
@@ -193,6 +199,10 @@ def action_for(name: str, args: dict) -> dict | None:
         return {"op": "build_datasheet", "variants": args.get("variants") or []}
     if name == "sch_add":
         return {"op": "sch_add", "ref": args.get("ref"), "pkg": args.get("pkg"), "value": args.get("value"), "size": args.get("size"), "mpn": args.get("mpn")}
+    if name == "sch_set":
+        return {"op": "sch_set", "ref": args.get("ref"), "value": args.get("value"), "size": args.get("size"), "mpn": args.get("mpn")}
+    if name == "pcb_set":
+        return {"op": "pcb_set", "ref": args.get("ref"), "value": args.get("value"), "size": args.get("size"), "mpn": args.get("mpn")}
     if name == "sch_wire":
         return {"op": "sch_wire", "name": args.get("name"), "a": args.get("a"), "b": args.get("b"), "pins": args.get("pins")}
     if name == "fp_assign":
@@ -221,6 +231,27 @@ def action_for(name: str, args: dict) -> dict | None:
 
 
 def execute(name: str, args: dict) -> dict:
+    if name == "batch":
+        steps = args.get("steps") or []
+        if not isinstance(steps, list) or not steps:
+            return {"text": "A batch needs steps.", "state": snapshot(load_state()), "isError": True}
+        notes = []
+        state = load_state()
+        try:
+            for step in steps:
+                if not isinstance(step, dict):
+                    raise ValueError("bad step")
+                tool = str(step.get("tool") or step.get("op") or "")
+                action = action_for(tool, step)
+                if action is None:
+                    raise ValueError(tool or "step")
+                notes.append(dispatch(state, action))
+            reply = " ".join(notes)
+            remember(state, "batch", reply, ["batch"])
+            save_state(state)
+            return {"text": reply, "state": snapshot(state), "isError": False}
+        except (KeyError, TypeError, ValueError):
+            return {"text": "A batch step needs its arguments.", "state": snapshot(load_state()), "isError": True}
     action = action_for(name, args)
     if action is None:
         return {"text": f"Unknown tool {name}", "state": snapshot(load_state()), "isError": True}

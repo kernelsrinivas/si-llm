@@ -50,6 +50,7 @@ class Handler(BaseHTTPRequestHandler):
                     "role": "mcp-client",
                     "version": VERSION,
                     "api": ["ask", "approve", "crew", "agent", "datasheet", "mcp"],
+                    "auth": "bearer" if os.environ.get("SI_TOKEN") else "none",
                     "model": {
                         "name": "si-pcb-cad",
                         "stack": "pytorch",

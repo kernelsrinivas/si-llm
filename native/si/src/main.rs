@@ -582,8 +582,14 @@ fn http_exchange(method: &str, url: &str, body: &str) -> Result<String, String> 
     let mut stream = TcpStream::connect((host, port)).map_err(|_| format!("The model server is not running at {}", model_url()))?;
     stream.set_read_timeout(Some(Duration::from_secs(60))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(30))).ok();
+    let token = std::env::var("SI_TOKEN").unwrap_or_default();
+    let auth = if url.starts_with(&model_url()) && !token.is_empty() {
+        format!("\r\nAuthorization: Bearer {token}")
+    } else {
+        String::new()
+    };
     let req = format!(
-        "{method} {path} HTTP/1.0\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "{method} {path} HTTP/1.0\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}{auth}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;

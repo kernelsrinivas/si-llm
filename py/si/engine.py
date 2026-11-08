@@ -192,6 +192,10 @@ def load_state() -> dict:
         work["cell"] = saved["cell"]
     if isinstance(saved.get("focus"), str):
         work["focus"] = saved["focus"]
+    if isinstance(saved.get("title"), str):
+        work["title"] = saved["title"]
+    if isinstance(saved.get("path"), str):
+        work["path"] = saved["path"]
     if isinstance(saved.get("ask"), dict):
         work["ask"] = saved["ask"]
     if isinstance(saved.get("power"), str):
@@ -251,6 +255,35 @@ def ref_of(end: str) -> str:
 
 
 def part_extra(action: dict) -> dict:
+    extra = {}
+    for key in ("value", "size", "mpn"):
+        if action.get(key):
+            extra[key] = str(action[key])
+    return extra
+
+
+def _saved_design(work: dict) -> bool:
+    return bool(str(work.get("title") or "").strip() or str(work.get("path") or "").strip())
+
+
+def _join_net(rows: list, name: str, ends: list[str]) -> str:
+    """One pin keeps one net name. Say which nets were joined."""
+    old = set()
+    for end in ends:
+        for row in rows:
+            if end in (row["a"], row["b"]) and row["name"] != name:
+                old.add(row["name"])
+    if old:
+        for row in rows:
+            if row["name"] in old:
+                row["name"] = name
+    for a, b in zip(ends, ends[1:]):
+        if not any(row["name"] == name and {row["a"], row["b"]} == {a, b} for row in rows):
+            rows.append({"name": name, "a": a, "b": b})
+    tied = f"{name} ties {', '.join(ends)}"
+    if old:
+        return f"Joined {', '.join(sorted(old))} into {name} at {', '.join(ends)}."
+    return tied + "."
     extra = {}
     for key in ("value", "size", "mpn"):
         if action.get(key):
@@ -1842,20 +1875,36 @@ def apply(state: dict, action: dict) -> str:
     if op == "sch_add":
         ref = canon_ref(str(action["ref"]))
         pkg = canon_pkg(str(action["pkg"]))
-        work["symbols"] = [s for s in work["symbols"] if s["ref"] != ref]
-        work["symbols"].append({"ref": ref, "pkg": pkg, **part_extra(action)})
+        existing = next((row for row in work["symbols"] if row["ref"] == ref), None)
         extra = part_extra(action)
+        if existing:
+            if not extra:
+                return f"{ref} is already on the sheet. Give a value or a size to change it."
+            existing["pkg"] = pkg
+            existing.update(extra)
+            detail = " ".join(f"{key} {extra[key]}" for key in ("value", "size", "mpn") if key in extra)
+            return f"Updated {ref}: {detail}."
+        work["symbols"].append({"ref": ref, "pkg": pkg, **extra})
         detail = " ".join(extra[key] for key in ("value", "size", "mpn") if key in extra)
         return f"Schematic symbol {pkg} as {ref}" + (f" {detail}." if detail else ".")
+    if op == "sch_set":
+        ref = canon_ref(str(action["ref"]))
+        existing = next((row for row in work["symbols"] if row["ref"] == ref), None)
+        if existing is None:
+            return f"{ref} is not on the sheet."
+        extra = part_extra(action)
+        if not extra:
+            return f"Say the value or size to change on {ref}."
+        existing.update(extra)
+        detail = " ".join(f"{key} {extra[key]}" for key in ("value", "size", "mpn") if key in extra)
+        return f"Updated {ref}: {detail}."
     if op == "sch_wire":
         name = canon_net(str(action["name"]))
         ends = pin_ends(action)
         if len(ends) < 2:
             return "Name at least two pins, for example U1.VOUT and C1.2."
-        for a, b in zip(ends, ends[1:]):
-            work["wires"] = [n for n in work["wires"] if not (n["name"] == name and n["a"] == a and n["b"] == b)]
-            work["wires"].append({"name": name, "a": a, "b": b})
-        return f"Schematic wire {name} ties {', '.join(ends)}."
+        note = _join_net(work["wires"], name, ends)
+        return note if note.startswith("Joined") else "Schematic wire " + note
     if op == "sch_erc":
         symbols = work["symbols"]
         if not symbols:
@@ -1918,7 +1967,7 @@ def apply(state: dict, action: dict) -> str:
         missing = [p["ref"] for p in parts if p["ref"] not in assigned]
         bodies = [float(row["body"]["h"]) for row in work["footprints"] if isinstance(row.get("body"), dict) and row["body"].get("h")]
         tall = max([HEIGHT.get(p["pkg"], 0.6) for p in parts] + bodies)
-        work["view3d"] = f"{len(parts)} models, tallest {tall:.1f} mm"
+        work["view3d"] = f"Height summary: tallest {tall:.1f} mm, {len(parts)} models"
         if missing:
             return work["view3d"] + ". Missing footprints: " + ", ".join(missing) + "."
         return "3D viewer: " + work["view3d"] + "."
@@ -2029,6 +2078,8 @@ def apply(state: dict, action: dict) -> str:
     if op == "cover_all":
         return cover_all(state)
     if op == "fab_gerber":
+        if not _saved_design(work):
+            return "Save the design first. An untitled board has no folder for fabrication or gerbers."
         if not pcb["parts"]:
             return "Fabrication needs a layout."
         placed = {p["ref"] for p in pcb["parts"]}
@@ -2072,13 +2123,32 @@ def apply(state: dict, action: dict) -> str:
         ref = canon_ref(str(action["ref"]))
         pkg = canon_pkg(str(action["pkg"]))
         x, y = float(action["x"]), float(action["y"])
-        pcb["parts"] = [p for p in pcb["parts"] if p["ref"] != ref]
-        pcb["parts"].append({"ref": ref, "pkg": pkg, "x": x, "y": y, **part_extra(action)})
+        existing = next((part for part in pcb["parts"] if part["ref"] == ref), None)
+        extra = part_extra(action)
+        if existing:
+            if not extra:
+                return f"{ref} is already on the board. Give a value or a size to change it."
+            existing["pkg"] = pkg
+            existing["x"], existing["y"] = x, y
+            existing.update(extra)
+            detail = " ".join(f"{key} {extra[key]}" for key in ("value", "size", "mpn") if key in extra)
+            return f"Updated {ref}: {detail}."
+        pcb["parts"].append({"ref": ref, "pkg": pkg, "x": x, "y": y, **extra})
         pcb["tracks"] = []
         pcb["released"] = False
-        extra = part_extra(action)
         detail = " ".join(extra[key] for key in ("value", "size", "mpn") if key in extra)
         return f"Placed {pkg} as {ref} at ({x:g}, {y:g}) mm" + (f" {detail}." if detail else ".")
+    if op == "pcb_set":
+        ref = canon_ref(str(action["ref"]))
+        existing = next((part for part in pcb["parts"] if part["ref"] == ref), None)
+        if existing is None:
+            return f"{ref} is not on the board."
+        extra = part_extra(action)
+        if not extra:
+            return f"Say the value or size to change on {ref}."
+        existing.update(extra)
+        detail = " ".join(f"{key} {extra[key]}" for key in ("value", "size", "mpn") if key in extra)
+        return f"Updated {ref}: {detail}."
     if op == "pcb_delete":
         ref = canon_ref(str(action["ref"]))
         before = len(pcb["parts"])
@@ -2151,13 +2221,13 @@ def apply(state: dict, action: dict) -> str:
         ends = pin_ends(action)
         if len(ends) < 2:
             return "Name at least two pins, for example U1.GND and C1.2."
-        for a, b in zip(ends, ends[1:]):
-            pcb["nets"] = [n for n in pcb["nets"] if not (n["name"] == name and n["a"] == a and n["b"] == b)]
-            pcb["nets"].append({"name": name, "a": a, "b": b})
         pcb["tracks"] = []
         pcb["released"] = False
-        return f"Net {name} ties {', '.join(ends)}."
+        note = _join_net(pcb["nets"], name, ends)
+        return note if note.startswith("Joined") else "Net " + note
     if op == "pcb_flow":
+        if not _saved_design(work):
+            return "Save the design first. An untitled board has no folder for fabrication or gerbers."
         return design_person(state)
     if op == "pcb_drc":
         items = drc(state)
