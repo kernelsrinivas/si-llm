@@ -114,8 +114,11 @@ SPECIAL = ["<pad>", "<bos>", "<eos>", "<sep>", "<unk>", "<none>"]
 BLOCK = 28
 N_EMBD = 768
 N_HEAD = 8
-N_LAYER = 17
-THOUGHT_LAYERS = 6
+THINK_LAYERS = 11
+DECIDE_LAYERS = 6
+DESIGN_LAYERS = 6
+N_LAYER = THINK_LAYERS + DECIDE_LAYERS + DESIGN_LAYERS
+THOUGHT_LAYERS = DECIDE_LAYERS
 DROP = 0.15
 
 
@@ -142,7 +145,7 @@ def build_vocab() -> list[str]:
     integrity signal open files layer
     crew agent agents multi specialist viewer
     purpose outcome person human designer designing fabricate visual wires traces routes
-    expect expectation only want not assume ask before design guess give complete think decide self exactly ratings
+    expect expectation only want not assume ask before design guess give complete think decide self exactly ratings then now whole bill
     industry automatic automotive aerospace marine robot medical tiny battery modem
     motherboard cpu gpu network car flight ship patient electronics class module
     outline all datasheet sheet symbols
@@ -209,13 +212,17 @@ class GPT(nn.Module):
         self.head = nn.Linear(n_embd, n_vocab, bias=False)
 
     def forward(self, idx: torch.Tensor) -> torch.Tensor:
-        b, t = idx.shape
+        _b, t = idx.shape
         x = self.tok(idx) + self.pos(torch.arange(t, device=idx.device))
-        # The first stack reads the request. The last six layers are the decision stack.
-        cut = max(0, len(self.blocks) - THOUGHT_LAYERS)
-        for block in self.blocks[:cut]:
+        # Order is fixed: think, then decide, then design.
+        think = self.blocks[:THINK_LAYERS]
+        decide = self.blocks[THINK_LAYERS : THINK_LAYERS + DECIDE_LAYERS]
+        design = self.blocks[THINK_LAYERS + DECIDE_LAYERS :]
+        for block in think:
             x = block(x)
-        for block in self.blocks[cut:]:
+        for block in decide:
+            x = block(x)
+        for block in design:
             x = block(x)
         return self.head(self.ln_f(x))
 
@@ -712,6 +719,44 @@ def samples(rng: random.Random) -> list[tuple[str, list[str]]]:
         "walk the whole design from schematic wires to the bom",
     ):
         add(phrase, ["PCB_FLOW", none, none, none, none])
+    designs = {
+        "PCB_FLOW": (
+            "think then decide then design the board",
+            "design the complete board",
+            "now design the whole pcb",
+        ),
+        "SCH_ERC": (
+            "design the schematic",
+            "now design the wires",
+        ),
+        "PCB_DRC": (
+            "design the check",
+            "now design the drc",
+        ),
+        "SIM_DC": (
+            "design the simulation",
+            "now design the dc check",
+        ),
+        "VIEW_3D": (
+            "design the 3d board",
+            "now design the 3d view",
+        ),
+        "FAB_PACK": (
+            "design the fabrication",
+            "now design the gerbers",
+        ),
+        "ASM_BOM": (
+            "design the bom",
+            "now design the bill",
+        ),
+        "ASM_POS": (
+            "design the assembly",
+            "now design the centroid",
+        ),
+    }
+    for intent, phrases in designs.items():
+        for phrase in phrases:
+            add(phrase, [intent, none, none, none, none])
     one_agent = {
         "schematic": ("ask the schematic agent", "schematic agent run erc", "use the schematic agent"),
         "layout": ("ask the layout agent", "layout agent show the board", "use the layout agent"),
@@ -1632,13 +1677,13 @@ def finetune() -> dict:
                 block.proj.bias.zero_()
                 block.fc2.weight.zero_()
                 block.fc2.bias.zero_()
-    thought_at = len(model.blocks) - THOUGHT_LAYERS
+    design_at = THINK_LAYERS + DECIDE_LAYERS
     for param in model.parameters():
         param.requires_grad = False
-    for block in list(model.blocks)[thought_at:]:
+    for block in list(model.blocks)[design_at:]:
         for param in block.parameters():
             param.requires_grad = True
-    # The decision words are new. The head has to be able to say them.
+    # The design stack writes the command. The head has to be able to say it.
     model.head.weight.requires_grad = True
     rows = samples(rng)
     train_rows, test_rows = split_rows(rows, rng)
@@ -1649,8 +1694,16 @@ def finetune() -> dict:
     train_rows = focus + anchors[:2000]
     expect_rows = [row for row in train_rows if any(word in row[0] for word in ("expect", "only want", "assume", "guess", "think about", "decide what"))]
     crew_rows = [row for row in train_rows if row[1][0] in {"CREW", "AGENT"}]
-    train_rows = train_rows + expect_rows * 20 + crew_rows * 8
-    print(f"train {len(train_rows)} thought {THOUGHT_LAYERS} layers {len(model.blocks)}", flush=True)
+    design_rows = [row for row in train_rows if row[0].startswith("design ") or row[0].startswith("now design") or "then design" in row[0]]
+    train_rows = train_rows + expect_rows * 20 + crew_rows * 8 + design_rows * 12
+    think_params = sum(p.numel() for block in model.blocks[:THINK_LAYERS] for p in block.parameters())
+    decide_params = sum(p.numel() for block in model.blocks[THINK_LAYERS : design_at] for p in block.parameters())
+    design_params = sum(p.numel() for block in model.blocks[design_at:] for p in block.parameters())
+    print(
+        f"train {len(train_rows)} think {THINK_LAYERS} decide {DECIDE_LAYERS} design {DESIGN_LAYERS} "
+        f"params {think_params} {decide_params} {design_params}",
+        flush=True,
+    )
     device = torch.device("cpu")
     torch.set_num_threads(2)
     model = model.to(device)
@@ -1704,7 +1757,12 @@ def finetune() -> dict:
                 "vocab": len(vocab),
                 "width": N_EMBD,
                 "layers": N_LAYER,
-                "thought_layers": THOUGHT_LAYERS,
+                "think_layers": THINK_LAYERS,
+                "decide_layers": DECIDE_LAYERS,
+                "design_layers": DESIGN_LAYERS,
+                "think_params": think_params,
+                "decide_params": decide_params,
+                "design_params": design_params,
                 "dropout": DROP,
             }, indent=2))
     model.load_state_dict(torch.load(WEIGHTS, map_location="cpu", weights_only=False)["model"])
@@ -1721,7 +1779,12 @@ def finetune() -> dict:
         "vocab": len(vocab),
         "width": N_EMBD,
         "layers": N_LAYER,
-        "thought_layers": THOUGHT_LAYERS,
+        "think_layers": THINK_LAYERS,
+        "decide_layers": DECIDE_LAYERS,
+        "design_layers": DESIGN_LAYERS,
+        "think_params": think_params,
+        "decide_params": decide_params,
+        "design_params": design_params,
         "dropout": DROP,
         "ask": asks,
         "flow": flows,

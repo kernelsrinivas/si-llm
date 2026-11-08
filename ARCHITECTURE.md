@@ -1,6 +1,6 @@
 # SI-LLM architecture
 
-SI-LLM is a small PCB specialist. It is not a general frontier model. The transformer turns a short sentence into a command. The last 6 layers are the decision stack: they choose ask, one stage, the full design, or the crew, from what the user asked. Python code around that model holds the board catalogs, the calculators, the approval gate, and the MCP calls.
+SI-LLM is a small PCB specialist. It is not a general frontier model. The transformer turns a short sentence into a command. The layers run in order: 11 thinking layers read the request, 6 decision layers choose ask, one stage, the full design, or the crew, and 6 design layers turn that choice into the command. Python code around that model holds the board catalogs, the calculators, the approval gate, and the MCP calls.
 
 ## How to run it
 
