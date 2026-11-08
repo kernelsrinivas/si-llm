@@ -21,7 +21,7 @@ from py.si.net import load, predict, program_to_action
 CONFIG = ROOT / "mcp.json"
 PCB_MCP = os.environ.get("SI_PCB_MCP", "http://127.0.0.1:8766/mcp")
 CAD_MCP = os.environ.get("SI_CAD_MCP", "http://127.0.0.1:8767/mcp")
-VERSION = "0.9.3"
+VERSION = "0.9.4"
 PRESETS = {
     "pcb": {"name": "pcb", "title": "PCB", "transport": "http", "target": PCB_MCP},
     "cad": {"name": "cad", "title": "CAD", "transport": "http", "target": CAD_MCP},
@@ -58,6 +58,10 @@ def _summary(text: str) -> str:
         data = json.loads(text)
     except ValueError:
         return text
+    if isinstance(data, dict) and ("undone" in data or "redone" in data):
+        done = int(data.get("undone") or data.get("redone") or 0)
+        verb = "Undid" if "undone" in data else "Redid"
+        return f"{verb} {done} step{'s' if done != 1 else ''}."
     if not isinstance(data, dict) or not isinstance(data.get("violations"), list):
         return text
     errors, warnings = int(data.get("errors") or 0), int(data.get("warnings") or 0)
@@ -478,6 +482,8 @@ def plan(action: dict) -> list[tuple[str, str, dict]]:
         return [("pcb", "asm_pos", {})]
     if op == "chip_check":
         return [("pcb", "chip_check", {"kind": action.get("kind") or "pin"})]
+    if op == "server_tool":
+        return [("pcb", str(action["tool"]), dict(action.get("args") or {}))]
     if op == "set_industry":
         return [("pcb", "set_industry", {"kind": action.get("kind") or ""})]
     if op == "set_board":
@@ -983,12 +989,63 @@ _PIN = re.compile(r"\b([a-z]+\d+)\.([a-z0-9]+)\b", re.I)
 _BESIDE = re.compile(r"\b([rcdlqjuy]\d+)\b.*\bnext to\b.*\b([rcdlqjuy]\d+)\b", re.I)
 _COORD = re.compile(r"\b([A-Za-z]+\d+)\b(?:\s+[A-Za-z0-9.+-]+)?\s+\(\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\)")
 _NET_SKIP = {"the", "a", "an", "this", "that", "to", "from", "and", "on", "its", "their", "one", "new", "between"}
+_CHIP_KINDS = {
+    "pin": "pin",
+    "pins": "pin",
+    "pinout": "pin",
+    "decap": "decap",
+    "decoupling": "decap",
+    "power": "power",
+    "io": "io",
+    "clock": "clock",
+    "reset": "reset",
+    "boot": "boot",
+    "thermal": "thermal",
+    "si": "si",
+    "pi": "pi",
+}
+_INDUSTRY_ALIAS = {
+    "auto": "automotive",
+    "car": "automotive",
+    "automatic": "automotive",
+    "aviation": "aerospace",
+    "avionics": "aerospace",
+    "robotics": "robot",
+    "robots": "robot",
+}
+
+
+def _live_rows() -> list[dict]:
+    """Connected servers that answer. Empty when none are up."""
+    try:
+        return [row for row in probe() if row.get("ok")]
+    except Exception:
+        return []
+
+
+def _offers(rows: list[dict], tool: str) -> bool:
+    return any(tool in (row.get("tools") or []) for row in rows)
+
+
+def _server_refs(rows: list[dict]) -> set[str]:
+    """References already used on the connected board."""
+    used: set[str] = set()
+    for row in rows:
+        if "pcb_status" not in (row.get("tools") or []):
+            continue
+        try:
+            text = call_tool(row["id"], "pcb_status", {})["text"]
+        except Exception:
+            continue
+        used |= {ref.upper() for ref in re.findall(r"\b([A-Za-z]{1,3}\d+)\b", text)}
+    return used
 
 
 def _free_ref(prefix: str) -> str:
     state = load_state()
     used = {str(row.get("ref") or "").upper() for row in (state.get("work") or {}).get("symbols") or []}
     used |= {str(row.get("ref") or "").upper() for row in state["pcb"].get("parts") or []}
+    used |= _server_refs(_live_rows())
     number = 1
     while f"{prefix}{number}" in used and number < 400:
         number += 1
@@ -1021,8 +1078,48 @@ def _named_part(text: str) -> str:
     return ""
 
 
+def _without_sieda_duplicates(plan_: dict) -> dict:
+    """SiEDA's pcb_net also ties the schematic, so the same sch_wire is not sent again."""
+    if plan_.get("op") != "batch":
+        return plan_
+    rows = _live_rows()
+    if not any(str(row.get("server") or "").lower() == "sieda" for row in rows):
+        return plan_
+    boards = {(step.get("name"), tuple(step.get("pins") or [])) for step in plan_["steps"] if step.get("op") == "pcb_net"}
+    steps = [
+        step
+        for step in plan_["steps"]
+        if not (step.get("op") == "sch_wire" and (step.get("name"), tuple(step.get("pins") or [])) in boards)
+    ]
+    return {**plan_, "steps": steps}
+
+
 def sentence_plan(text: str) -> dict | None:
+    planned = _sentence_plan(text)
+    return _without_sieda_duplicates(planned) if planned else planned
+
+
+def _sentence_plan(text: str) -> dict | None:
     """One sentence can be several adds and pin nets. SiEDA should not have to guess."""
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    bag = set(words)
+    if len(words) <= 4 and bag & {"undo", "redo"}:
+        tool = "project_redo" if "redo" in bag else "project_undo"
+        if _offers(_live_rows(), tool):
+            return {"op": "server_tool", "tool": tool}
+    if "check" in bag and "industry" not in bag:
+        kinds = [_CHIP_KINDS[word] for word in words if word in _CHIP_KINDS]
+        if kinds:
+            return {"op": "chip_check", "kind": kinds[0]}
+    if "industry" in bag:
+        from py.si.engine import INDUSTRY
+
+        if "check" in bag:
+            return {"op": "industry_check"}
+        for word in words:
+            kind = _INDUSTRY_ALIAS.get(word, word)
+            if kind != "industry" and kind in INDUSTRY:
+                return {"op": "set_industry", "kind": kind}
     change = re.search(r"\b(?:change|set|update)\s+([rcdlqjuy]\d+)\b", text, re.I)
     if change:
         ref = change.group(1).upper()
