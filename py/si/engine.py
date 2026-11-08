@@ -1464,6 +1464,90 @@ def design_bridge(state: dict) -> str:
     return "Placed J7, D11, D12, D13, D14, C7. " + steps
 
 
+def series_led_task(text: str) -> bool:
+    words = re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
+    return any(word in {"led", "leds"} for word in words) and any(word in {"series", "serious", "string"} for word in words)
+
+
+def design_series_led(state: dict, text: str) -> str:
+    """Place a series LED string on the stated rail and check whether it can light."""
+    words = re.sub(r"[^a-z0-9]+", " ", text.lower()).split()
+    rail = 5.0
+    for i, word in enumerate(words):
+        if word.endswith("v") and word[:-1].replace(".", "", 1).isdigit():
+            rail = float(word[:-1])
+        elif word == "v" and i and words[i - 1].replace(".", "", 1).isdigit():
+            rail = float(words[i - 1])
+    count = 5
+    for i, word in enumerate(words):
+        if word in {"led", "leds"} and i and words[i - 1].isdigit():
+            count = max(1, min(int(words[i - 1]), 12))
+    vf = 2.0
+    target_ma = 10.0
+    string_v = count * vf
+    headroom = rail - string_v
+    current_ma = 0.0 if headroom <= 0 else target_ma
+    resistor = None if headroom <= 0 else headroom / (target_ma / 1000.0)
+    refs = ["J20", "R20"] + [f"D{20 + i}" for i in range(count)]
+    parts = [("J20", "CONN", 12, 60), ("R20", "RES", 32, 60)]
+    parts += [(f"D{20 + i}", "LED", 52 + i * 16, 60) for i in range(count)]
+    chain = ["J20", "R20"] + [f"D{20 + i}" for i in range(count)]
+    nets = [("5V", "J20", "R20")]
+    for i in range(count):
+        nets.append((f"LED{i + 1}", chain[i + 1], chain[i + 2]))
+    nets.append(("GND", chain[-1], "J20"))
+    for ref, pkg, x, y in parts:
+        _put(state, ref, pkg, x, y)
+    for name, a, b in nets:
+        _tie(state, name, a, b)
+    work = _work(state)
+    work["focus"] = f"{rail:g} V series {count} LED board"
+    from py.si.router import route_board
+
+    pcb = state["pcb"]
+    led_refs = set(refs)
+    led_parts = [part for part in pcb["parts"] if part["ref"] in led_refs]
+    led_nets = [net for net in pcb["nets"] if net["a"] in led_refs and net["b"] in led_refs]
+    tracks, failed = route_board(led_parts, led_nets, work.get("outline") or [], float(_params(state)["min_track_mm"]))
+    pcb["tracks"] = [row for row in pcb.get("tracks") or [] if row["a"] not in led_refs and row["b"] not in led_refs] + tracks
+    pcb["released"] = False
+    wires = "; ".join(f"{name} from {a} to {b}" for name, a, b in nets)
+    routes = "; ".join(f"{row['name']} {row['a']} to {row['b']} at {row['width']} mm" for row in tracks) or "none"
+    if failed:
+        routes += ". Unrouted: " + ", ".join(failed)
+    if resistor is None:
+        resistor_line = (
+            f"Resistor: not a current set. {count} red LEDs at {vf:.1f} V need {string_v:.1f} V, "
+            f"and the rail is only {rail:.1f} V. Headroom {headroom:.1f} V."
+        )
+        sim = (
+            f"DC simulation: rail {rail:.2f} V, string {string_v:.2f} V, current {current_ma:.1f} mA. "
+            "The series string stays off. This is an operating-point check, not a SPICE run."
+        )
+    else:
+        resistor_line = f"Resistor: {resistor:.0f} ohm for {target_ma:.0f} mA at {vf:.1f} V each. Headroom {headroom:.1f} V."
+        sim = (
+            f"DC simulation: rail {rail:.2f} V, string {string_v:.2f} V, current {current_ma:.1f} mA through R20. "
+            "This is an operating-point check, not a SPICE run."
+        )
+    parallel = (rail - vf) / (target_ma / 1000.0) if rail > vf else None
+    alt = ""
+    if parallel:
+        alt = (
+            f" A working 5 V arrangement is {count} parallel LEDs, each with {parallel:.0f} ohm, "
+            f"{target_ma:.0f} mA each, {count * target_ma:.0f} mA from the rail."
+        )
+    return "\n".join([
+        f"I am designing a {rail:g} V DC board with {count} LEDs in series.",
+        "Forward voltage and current were not given. Suggestion used: red LED 2.0 V, 10 mA. Other choices: 1.8 V, 3.0 V white, 5 mA, 20 mA.",
+        f"Schematic: {wires}.",
+        resistor_line,
+        f"PCB: {', '.join(ref for ref, _pkg, _x, _y in parts)} on one row. Footprints 0603 LEDs, 0402 resistor, header.",
+        f"Routes: {routes}.",
+        sim + alt,
+    ])
+
+
 def build_circuit(state: dict, kind: str) -> str:
     """Place a starter circuit. This is not a silicon layout and not a SPICE run."""
     kind = kind if kind in {"switch", "plc", "pac", "mcu"} else "mcu"
