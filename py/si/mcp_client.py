@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
+import queue
 import re
 import secrets
-import select
 import shlex
 import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -19,18 +21,53 @@ from py.si.net import load, predict, program_to_action
 CONFIG = ROOT / "mcp.json"
 PCB_MCP = os.environ.get("SI_PCB_MCP", "http://127.0.0.1:8766/mcp")
 CAD_MCP = os.environ.get("SI_CAD_MCP", "http://127.0.0.1:8767/mcp")
-VERSION = "0.9.0"
+VERSION = "0.9.3"
 PRESETS = {
     "pcb": {"name": "pcb", "title": "PCB", "transport": "http", "target": PCB_MCP},
     "cad": {"name": "cad", "title": "CAD", "transport": "http", "target": CAD_MCP},
 }
 
 _MODEL = None
-_RPC_ID = 0
+_RPC_IDS = itertools.count(1)
+_RPC_LOCK = threading.Lock()
 _PENDING: dict[str, dict] = {}
+PENDING_TTL = 600.0
 _STDIO: dict[str, "StdioSession"] = {}
 _HTTP: dict[str, dict] = {}
 _GUARD = threading.Lock()
+
+
+def _next_id() -> int:
+    with _RPC_LOCK:
+        return next(_RPC_IDS)
+
+
+def _hold(proposal_id: str, item: dict) -> None:
+    """Drop approvals older than 10 minutes, then keep this one. Caller holds _GUARD."""
+    now = time.monotonic()
+    for key in [k for k, row in _PENDING.items() if now - row.get("at", now) > PENDING_TTL]:
+        del _PENDING[key]
+    _PENDING[proposal_id] = {**item, "at": now}
+
+
+def _summary(text: str) -> str:
+    """Turn a DRC or ERC JSON result into one sentence. Leave other text alone."""
+    if not text.lstrip().startswith("{"):
+        return text
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    if not isinstance(data, dict) or not isinstance(data.get("violations"), list):
+        return text
+    errors, warnings = int(data.get("errors") or 0), int(data.get("warnings") or 0)
+    line = f"{errors} error{'s' if errors != 1 else ''}, {warnings} warning{'s' if warnings != 1 else ''}"
+    worst = [
+        str(row.get("message") or row.get("code") or "")
+        for row in data["violations"]
+        if isinstance(row, dict) and row.get("severity") in ("error", "warning")
+    ][:3]
+    return f"Check: {line}" + (f" ({'; '.join(worst)})." if worst else ".")
 
 
 def rpc_timeout(tool: bool = False) -> float:
@@ -99,22 +136,43 @@ class StdioSession:
             text=True,
             bufsize=1,
         )
+        self.lines: queue.Queue[str | None] = queue.Queue()
+        self.lock = threading.Lock()
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self) -> None:
+        if self.proc.stdout is None:
+            self.lines.put(None)
+            return
+        for line in self.proc.stdout:
+            self.lines.put(line)
+        self.lines.put(None)
 
     def rpc(self, method: str, params: dict | None = None, tool: bool = False) -> dict:
-        global _RPC_ID
-        if self.proc.poll() is not None or self.proc.stdin is None or self.proc.stdout is None:
+        if self.proc.poll() is not None or self.proc.stdin is None:
             raise RuntimeError("stdio MCP exited")
-        _RPC_ID += 1
-        body = {"jsonrpc": "2.0", "id": _RPC_ID, "method": method}
+        rid = _next_id()
+        body = {"jsonrpc": "2.0", "id": rid, "method": method}
         if params is not None:
             body["params"] = params
-        self.proc.stdin.write(json.dumps(body) + "\n")
-        self.proc.stdin.flush()
-        ready, _, _ = select.select([self.proc.stdout], [], [], rpc_timeout(tool))
-        if not ready:
-            raise TimeoutError("stdio MCP timed out")
-        line = self.proc.stdout.readline()
-        payload = json.loads(line or "{}")
+        with self.lock:
+            self.proc.stdin.write(json.dumps(body) + "\n")
+            self.proc.stdin.flush()
+            deadline = time.monotonic() + rpc_timeout(tool)
+            while True:
+                left = deadline - time.monotonic()
+                try:
+                    line = self.lines.get(timeout=max(0.0, left))
+                except queue.Empty:
+                    raise TimeoutError("stdio MCP timed out") from None
+                if not line:
+                    raise RuntimeError("stdio MCP exited")
+                try:
+                    payload = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(payload, dict) and payload.get("id") == rid:
+                    break
         if "error" in payload:
             raise RuntimeError(payload["error"].get("message") or "MCP error")
         return payload.get("result") or {}
@@ -155,9 +213,7 @@ def _auth_headers(row: dict) -> dict[str, str]:
 
 
 def http_rpc(url: str, method: str, params: dict | None = None, row: dict | None = None, tool: bool = False) -> dict:
-    global _RPC_ID
-    _RPC_ID += 1
-    body = {"jsonrpc": "2.0", "id": _RPC_ID, "method": method}
+    body = {"jsonrpc": "2.0", "id": _next_id(), "method": method}
     if params is not None:
         body["params"] = params
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=_auth_headers(row or {}))
@@ -315,6 +371,7 @@ def call_tool(server_id: str, name: str, arguments: dict | None = None) -> dict:
         text = "3D view returned a picture and no height summary."
     if result.get("isError"):
         raise RuntimeError(text or "The tool refused the call.")
+    text = _summary(text)
     state = (result.get("structuredContent") or {}).get("state")
     return {"text": text, "state": state, "server": server_id, "tool": name}
 
@@ -705,7 +762,7 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
         if not approved and gated(resolved, mode):
             proposal_id = secrets.token_hex(4)
             with _GUARD:
-                _PENDING[proposal_id] = {"calls": resolved, "runtime": runtime, "program": [], "op": "batch"}
+                _hold(proposal_id, {"calls": resolved, "runtime": runtime, "program": [], "op": "batch"})
             return pack(
                 "Approval required before this MCP call.",
                 [f"{server}.{tool}" for server, tool, _args in resolved],
@@ -732,7 +789,7 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
         if not approved and gated(resolved, mode):
             proposal_id = secrets.token_hex(4)
             with _GUARD:
-                _PENDING[proposal_id] = {"calls": resolved, "runtime": runtime, "program": [], "op": action["op"]}
+                _hold(proposal_id, {"calls": resolved, "runtime": runtime, "program": [], "op": action["op"]})
             return pack(
                 "Approval required before this MCP call.",
                 [f"{server}.{tool}" for server, tool, _args in resolved],
@@ -859,7 +916,7 @@ def designer_turn(text: str, approved: bool = False, mode: str | None = None) ->
     if not approved and gated(resolved, mode):
         proposal_id = secrets.token_hex(4)
         with _GUARD:
-            _PENDING[proposal_id] = {"calls": resolved, "runtime": runtime, "program": program, "op": op}
+            _hold(proposal_id, {"calls": resolved, "runtime": runtime, "program": program, "op": op})
         return pack(
             "Approval required before this MCP call.",
             [f"{server}.{tool}" for server, tool, _args in resolved],
@@ -893,7 +950,7 @@ def datasheet_turn(text: str, mode: str | None = None) -> dict:
     if gated(resolved, mode):
         proposal_id = secrets.token_hex(4)
         with _GUARD:
-            _PENDING[proposal_id] = {"calls": resolved, "runtime": "datasheet", "program": [], "op": "build_datasheet"}
+            _hold(proposal_id, {"calls": resolved, "runtime": "datasheet", "program": [], "op": "build_datasheet"})
         reply = "Approval required before building " + ", ".join(row["package"] for row in variants) + " from the datasheet."
         if gaps:
             reply += " " + " ".join(gaps)
@@ -1051,6 +1108,8 @@ def decide(proposal_id: str, decision: str) -> dict:
     with _GUARD:
         item = _PENDING.pop(proposal_id, None)
     state = snapshot(load_state())
+    if item is not None and time.monotonic() - item.get("at", 0.0) > PENDING_TTL:
+        item = None
     if item is None:
         return pack("That approval expired. Ask again.", [], "client", "", state)
     if decision == "deny":
