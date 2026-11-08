@@ -599,7 +599,10 @@ def execute(calls: list[tuple[str, str, dict]], runtime: str, program: list[str]
         try:
             hit = call_tool(server_id, tool, args)
         except (urllib.error.URLError, RuntimeError, TimeoutError, OSError) as exc:
-            replies.append(f"{server_id} refused the call ({exc.__class__.__name__}).")
+            detail = str(exc).strip()
+            if not detail or detail == exc.__class__.__name__:
+                detail = "the server gave no reason"
+            replies.append(f"{server_id} refused the call: {detail}")
             commands.append(f"{server_id}.{tool}")
             continue
         replies.append(hit["text"] or "Done.")
@@ -921,7 +924,36 @@ _MPN = (
 )
 _PIN = re.compile(r"\b([a-z]+\d+)\.([a-z0-9]+)\b", re.I)
 _BESIDE = re.compile(r"\b([rcdlqjuy]\d+)\b.*\bnext to\b.*\b([rcdlqjuy]\d+)\b", re.I)
-_COORD = re.compile(r"\b([A-Za-z]+\d+)\s+[A-Za-z0-9-]+\s+\(([-\d.]+),([-\d.]+)\)")
+_COORD = re.compile(r"\b([A-Za-z]+\d+)\b(?:\s+[A-Za-z0-9.+-]+)?\s+\(\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\)")
+_NET_SKIP = {"the", "a", "an", "this", "that", "to", "from", "and", "on", "its", "their", "one", "new", "between"}
+
+
+def _free_ref(prefix: str) -> str:
+    state = load_state()
+    used = {str(row.get("ref") or "").upper() for row in (state.get("work") or {}).get("symbols") or []}
+    used |= {str(row.get("ref") or "").upper() for row in state["pcb"].get("parts") or []}
+    number = 1
+    while f"{prefix}{number}" in used and number < 400:
+        number += 1
+    return f"{prefix}{number}"
+
+
+def _net_name(text: str) -> str:
+    """Keep the name the sentence gives. 'led net' is LED, not NET."""
+    low = text.lower()
+    before = re.search(r"\b([a-z][a-z0-9]{0,15})\s+net\b", low)
+    if before and before.group(1) not in _NET_SKIP:
+        return before.group(1).upper()
+    after = re.search(r"\bnet\s+([a-z][a-z0-9]{0,15})\b", low)
+    if after and after.group(1) not in _NET_SKIP:
+        return after.group(1).upper()
+    if re.search(r"\b(gnd|ground)\b", low):
+        return "GND"
+    if re.search(r"\b5\s*v\b", low) or "5v" in low:
+        return "5V"
+    if re.search(r"\b3\s*v3\b|\b3v3\b", low):
+        return "3V3"
+    return ""
 
 
 def _named_part(text: str) -> str:
@@ -948,9 +980,9 @@ def sentence_plan(text: str) -> dict | None:
             return step
     low = re.sub(r"[^a-z0-9.+]+", " ", text.lower())
     pins = [f"{ref.upper()}.{pin.upper()}" for ref, pin in _PIN.findall(text)]
-    if len(pins) >= 2 and any(word in low.split() for word in ("connect", "net", "wire", "tie")):
-        name = "GND" if "gnd" in low or "ground" in low else "5V" if "5v" in low or "5 v" in low else "NET"
-        return {"op": "batch", "steps": [{"op": "sch_wire", "name": name, "pins": pins}, {"op": "pcb_net", "name": name, "pins": pins}]}
+    net = _net_name(text)
+    if len(pins) >= 2 and net:
+        return {"op": "batch", "steps": [{"op": "sch_wire", "name": net, "pins": pins}, {"op": "pcb_net", "name": net, "pins": pins}]}
     if "led" in low.split() and "resistor" in low.split() and ("5v" in low or "5 v" in text.lower()):
         return {
             "op": "batch",
@@ -972,16 +1004,21 @@ def sentence_plan(text: str) -> dict | None:
     part = _named_part(text)
     if part and any(word in low.split() for word in ("place", "add", "use")):
         pkg = "mcu" if part.startswith("ESP32") else "ldo"
-        ref = "U1"
+        named = re.findall(r"\b([uU]\d+)\b", text)
+        ref = named[-1].upper() if named else _free_ref("U")
         step = {"op": "sch_add", "ref": ref, "pkg": pkg, "mpn": part}
         return {"op": "batch", "steps": [step]}
     return None
 
 
 def _status_coord(text: str, ref: str) -> tuple[float, float] | None:
-    for found, _pkg, x, y in _COORD.findall(text):
-        if found.upper() == ref:
+    for found, x, y in _COORD.findall(text):
+        if found.upper() != ref:
+            continue
+        try:
             return float(x), float(y)
+        except ValueError:
+            continue
     return None
 
 
@@ -994,12 +1031,15 @@ def place_beside(text: str) -> dict | None:
     if any(row["id"] == "pcb" and row.get("target") for row in configured()):
         try:
             status = str(call_tool("pcb", "pcb_status", {}).get("text") or "")
-        except (urllib.error.URLError, RuntimeError, TimeoutError, OSError):
+        except (urllib.error.URLError, RuntimeError, TimeoutError, OSError, ValueError):
             status = ""
     if not status:
         from py.si.engine import apply
 
-        status = apply(load_state(), {"op": "pcb_status"})
+        try:
+            status = apply(load_state(), {"op": "pcb_status"})
+        except (KeyError, TypeError, ValueError):
+            return {"op": "note", "text": f"The board status could not be read, so {ref} was not moved next to {anchor}."}
     pos = _status_coord(status, anchor)
     if pos is None:
         return {"op": "note", "text": f"{anchor} is not on the board, so {ref} has nowhere to sit."}
